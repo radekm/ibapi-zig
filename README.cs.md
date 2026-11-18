@@ -83,6 +83,7 @@ přes `client.nextNotice(timeout)`.
 
 - [Vyhledávání kontraktů a opčních řetězců](docs/cs/contracts.md)
 - [Ceny akcií a opcí](docs/cs/prices.md)
+- [Příkazy (jen čtení)](docs/cs/orders.md)
 - [Síťový protokol](docs/cs/protocol.md)
 
 ## Příklady
@@ -94,6 +95,7 @@ export IBAPI_HOST=127.0.0.1 IBAPI_PORT=7497 IBAPI_CLIENT_ID=1   # výchozí hodn
 ./zig-out/bin/contracts details AAPL
 ./zig-out/bin/option_chain AAPL 45
 ./zig-out/bin/quote AAPL 20261218 190 C
+./zig-out/bin/orders
 ```
 
 ## Licence

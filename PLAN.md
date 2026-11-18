@@ -65,8 +65,9 @@ var chain = try client.optionChainParams(gpa, .{ .symbol = "AAPL", .con_id = 265
 // Price snapshot (bid/ask/last/close, greeks for options).
 const quote = try client.snapshot(ibapi.contract.Query.byConId(265598, "SMART"), .{});
 
-// Open orders of the account(s).
-const orders = try client.openOrders(gpa, .all_clients);
+// Open orders of the account(s), merged with their latest status.
+var orders = try client.openOrders(gpa, .all_clients, .{});
+defer orders.deinit();
 ```
 
 Asynchronous use: any call can be started with `io.async(Client.contractDetails, .{...})`
@@ -123,11 +124,18 @@ Owner's decisions: only snapshots, **never streaming subscriptions**; only
 - [x] Example `examples/quote.zig`, guide `docs/{en,cs}/prices.md`
 
 ### M5 — Open orders (read-only)
-- [ ] `openOrders()` — ReqOpenOrders / ReqAllOpenOrders, collect `OpenOrder`
-      + `OrderStatus` until `OpenOrderEnd`
-- [ ] Merge open order and its latest status into one `Order` view
-- [ ] Optionally `completedOrders()`
-- [ ] Example `examples/orders.zig`
+- [x] Routing by a set of message kinds (`Client.Key.kinds`); requests routed by
+      kind are registered and sent under one lock (`registerKindsAndSend`), so
+      their FIFO order matches the order the server receives them
+- [x] `openOrders(gpa, scope, opts)` — `.all_clients` (ReqAllOpenOrders, default
+      in docs) / `.this_client` (ReqOpenOrders; binds TWS orders for client id 0,
+      documented), collect `OpenOrder` + `OrderStatus` until `OpenOrderEnd`
+- [x] Merge open order and its latest status into one `orders.Order` view
+      (matched by perm id, else by order id + client id), typed helpers
+      (`Status`, `Action`, quantities, prices)
+- [x] `completedOrders(gpa, .{ .api_only })` (CompletedOrder until CompletedOrdersEnd)
+- [x] Unsolicited order updates outside a request go to notices
+- [x] Example `examples/orders.zig`, guide `docs/{en,cs}/orders.md`
 
 ### M6 — Hardening and docs
 - [ ] Pacing / rate limit (max ~50 msgs/s) in the writer
@@ -152,5 +160,13 @@ Owner's decisions: only snapshots, **never streaming subscriptions**; only
 - `std.Io.Threaded` in Zig 0.17.1 does not implement TCP connect timeouts
   (it panics), so `connect` races the connection attempt against a timer.
   Replace with `ConnectOptions.timeout` once Zig implements it.
+- Does TWS send open orders (and `OpenOrderEnd`?) on its own right after a
+  client connects? An unsolicited `OpenOrderEnd` arriving while `openOrders`
+  waits would end it early with a partial list. Check against real TWS.
+- Order updates that arrive while `openOrders` waits are consumed by it (and
+  lost if it times out) instead of going to the notices.
+- `ErrorMessage.id` is an order id for order-related errors; such an error
+  could be misrouted to a pending request with the same request id. Not an
+  issue while the library places no orders; revisit before the order phase.
 - Warning codes: only 2100–2199 are treated as non-terminal for requests so far;
   extend in M4 (e.g. 10167 delayed market data) when market data needs it.

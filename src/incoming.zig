@@ -30,6 +30,11 @@ pub const Incoming = union(enum) {
     tick_req_params: proto.TickReqParams,
     tick_snapshot_end: proto.TickSnapshotEnd,
     market_data_type: proto.MarketDataType,
+    open_order: proto.OpenOrder,
+    order_status: proto.OrderStatus,
+    open_order_end: proto.OpenOrdersEnd,
+    completed_order: proto.CompletedOrder,
+    completed_orders_end: proto.CompletedOrdersEnd,
     /// A message this version of the library does not decode.
     other: Other,
 

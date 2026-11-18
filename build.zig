@@ -41,7 +41,7 @@ pub fn build(b: *std.Build) !void {
     // Examples are built by `zig build examples` and also by `zig build test`,
     // so that they never go stale.
     const examples_step = b.step("examples", "Build the examples");
-    for ([_][]const u8{ "connect", "contracts", "option_chain", "quote" }) |name| {
+    for ([_][]const u8{ "connect", "contracts", "option_chain", "quote", "orders" }) |name| {
         const exe = b.addExecutable(.{
             .name = name,
             .root_module = b.createModule(.{

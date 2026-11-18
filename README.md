@@ -83,6 +83,7 @@ Messages that belong to no request (informational errors etc.) are read with
 
 - [Looking up contracts and option chains](docs/en/contracts.md)
 - [Prices of stocks and options](docs/en/prices.md)
+- [Orders (read-only)](docs/en/orders.md)
 - [Wire protocol](docs/en/protocol.md)
 
 ## Examples
@@ -94,6 +95,7 @@ export IBAPI_HOST=127.0.0.1 IBAPI_PORT=7497 IBAPI_CLIENT_ID=1   # defaults
 ./zig-out/bin/contracts details AAPL
 ./zig-out/bin/option_chain AAPL 45
 ./zig-out/bin/quote AAPL 20261218 190 C
+./zig-out/bin/orders
 ```
 
 ## License

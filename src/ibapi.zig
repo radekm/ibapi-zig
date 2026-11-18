@@ -24,6 +24,9 @@ pub const contract = @import("contract.zig");
 /// Market data snapshots (`Client.snapshot`).
 pub const market_data = @import("market_data.zig");
 
+/// Orders as reported by TWS (`Client.openOrders`, `Client.completedOrders`).
+pub const orders = @import("orders.zig");
+
 /// A decoded message received from the server.
 pub const Incoming = @import("incoming.zig").Incoming;
 

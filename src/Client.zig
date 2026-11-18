@@ -29,6 +29,7 @@ const Mailbox = @import("mailbox.zig").Mailbox;
 const Transport = @import("Transport.zig");
 const contract = @import("contract.zig");
 const market_data = @import("market_data.zig");
+const orders = @import("orders.zig");
 
 const log = std.log.scoped(.ibapi);
 
@@ -49,6 +50,9 @@ write_timeout: Io.Duration,
 
 /// Serialises writers of whole frames.
 write_mutex: Io.Mutex,
+/// Held while a request answered by message kind is registered and sent, so
+/// that such requests are queued in the order the server receives them.
+kind_mutex: Io.Mutex,
 
 server_version: u32,
 connection_time: []u8,
@@ -124,9 +128,11 @@ pub const Options = struct {
 pub const Key = union(enum) {
     /// Messages whose request id (or `ErrorMessage.id`) equals this value.
     req_id: i32,
-    /// Messages of this kind that carry no request id. When several requests
-    /// wait for the same kind, they are served in registration order.
-    kind: wire.InMsg,
+    /// Messages of these kinds that carry no request id, e.g. open orders
+    /// and their status updates. When several requests wait for the same
+    /// kind, they are served in registration order. The slice must outlive
+    /// the registration (usually it is a compile-time constant).
+    kinds: []const wire.InMsg,
 };
 
 /// The stream of messages answering one request. It must stay at a fixed
@@ -208,6 +214,7 @@ pub fn connect(io: Io, gpa: Allocator, options: Options) ConnectError!*Client {
         .snapshot_timeout = options.snapshot_timeout,
         .write_timeout = options.write_timeout,
         .write_mutex = .init,
+        .kind_mutex = .init,
         .server_version = 0,
         .connection_time = &.{},
         .accounts = &.{},
@@ -328,8 +335,33 @@ pub fn register(c: *Client, r: *Responses, key: Key, end: ?wire.InMsg, buffer: [
     if (c.failure) |err| return err;
     switch (key) {
         .req_id => |id| try c.by_req_id.putNoClobber(c.gpa, id, r),
-        .kind => try c.by_kind.append(c.gpa, r),
+        .kinds => try c.by_kind.append(c.gpa, r),
     }
+}
+
+/// Registers `r` for messages of `kinds` (see `register`) and sends the
+/// request `msg`. Concurrent calls are serialised, so the responses, which
+/// carry no request id, reach the requests in the order they were sent.
+/// After success the caller must call `r.deinit()`; after failure `r` is
+/// already deinitialised.
+pub fn registerKindsAndSend(
+    c: *Client,
+    r: *Responses,
+    kinds: []const wire.InMsg,
+    end: ?wire.InMsg,
+    buffer: []Incoming,
+    timeout: Io.Timeout,
+    id: wire.OutMsg,
+    msg: anytype,
+) Error!void {
+    // Waiting here is bounded by the other sender's write timeout.
+    try c.kind_mutex.lock(c.io);
+    defer c.kind_mutex.unlock(c.io);
+    try c.register(r, .{ .kinds = kinds }, end, buffer, timeout);
+    c.send(id, msg) catch |err| {
+        r.deinit();
+        return err;
+    };
 }
 
 /// The default deadline of a request starting now (`Options.request_timeout`).
@@ -341,9 +373,8 @@ pub fn requestTimeout(c: *const Client) Io.Timeout {
 pub fn currentTime(c: *Client) (Error || error{UnexpectedResponse})!i64 {
     var buffer: [1]Incoming = undefined;
     var r: Responses = undefined;
-    try c.register(&r, .{ .kind = .current_time }, .current_time, &buffer, c.requestTimeout());
+    try c.registerKindsAndSend(&r, &.{.current_time}, .current_time, &buffer, c.requestTimeout(), .req_current_time, proto.CurrentTimeRequest{});
     defer r.deinit();
-    try c.send(.req_current_time, proto.CurrentTimeRequest{});
 
     var msg = (try r.next()) orelse return error.UnexpectedResponse;
     defer msg.deinit(c.gpa);
@@ -529,6 +560,97 @@ pub fn snapshot(c: *Client, query: contract.Query, opts: RequestOptions) Request
         }
         return err;
     };
+}
+
+/// Orders returned by `openOrders` and `completedOrders`.
+pub const OrderList = List(orders.Order);
+
+/// Which open orders `openOrders` returns.
+pub const OrderScope = enum {
+    /// Orders of all API clients and orders entered in TWS
+    /// (`ReqAllOpenOrders`). Does not change anything in TWS.
+    all_clients,
+    /// Only orders placed by this client id (`ReqOpenOrders`). Note that for
+    /// client id 0 TWS also binds orders entered manually in TWS to this
+    /// client, i.e. it assigns them API order ids.
+    this_client,
+};
+
+/// Returns the open orders with their latest status, one `orders.Order` per
+/// order. Read-only: the library cannot change orders. Free the result
+/// with `deinit`.
+///
+/// After this request TWS keeps sending updates of the orders (open order
+/// and order status messages); they are delivered as notices
+/// (`nextNotice`).
+pub fn openOrders(c: *Client, gpa: Allocator, scope: OrderScope, opts: RequestOptions) RequestError!OrderList {
+    var buffer: [64]Incoming = undefined;
+    var r: Responses = undefined;
+    const kinds = &[_]wire.InMsg{ .open_order, .order_status, .open_order_end };
+    switch (scope) {
+        .all_clients => try c.registerKindsAndSend(&r, kinds, .open_order_end, &buffer, c.timeoutFor(opts), .req_all_open_orders, proto.AllOpenOrdersRequest{}),
+        .this_client => try c.registerKindsAndSend(&r, kinds, .open_order_end, &buffer, c.timeoutFor(opts), .req_open_orders, proto.OpenOrdersRequest{}),
+    }
+    defer r.deinit();
+
+    // TWS has no cancel for this request; a late answer goes to the notices.
+    var builder: orders.Builder = .init(gpa);
+    defer builder.deinit();
+    while (try c.nextResponse(&r, opts.diagnostics)) |msg| {
+        var m = msg;
+        defer m.deinit(c.gpa);
+        switch (m) {
+            .open_order => |o| try builder.addOrder(try orders.Order.fromOpenOrder(gpa, o)),
+            .order_status => |s| try builder.addStatus(s),
+            .open_order_end => {},
+            else => return error.UnexpectedResponse,
+        }
+    }
+    return .{ .gpa = gpa, .items = try builder.finish() };
+}
+
+/// Options of `completedOrders`.
+pub const CompletedOrdersOptions = struct {
+    /// Only orders placed through the API (not those entered in TWS).
+    api_only: bool = false,
+    /// Limit for the whole request; null means `Options.request_timeout`.
+    timeout: ?Io.Duration = null,
+    /// Receives the TWS error when the request fails with `error.RequestRejected`.
+    diagnostics: ?*Diagnostics = null,
+};
+
+/// Returns the orders completed (filled, cancelled or rejected) today, as
+/// far as TWS keeps them. `Order.status` is null; the final status is in
+/// `Order.state` (`status`, `completedTime`, `completedStatus`). Free the
+/// result with `deinit`.
+pub fn completedOrders(c: *Client, gpa: Allocator, opts: CompletedOrdersOptions) RequestError!OrderList {
+    var buffer: [64]Incoming = undefined;
+    var r: Responses = undefined;
+    const kinds = &[_]wire.InMsg{ .completed_order, .completed_orders_end };
+    const timeout = c.timeoutFor(.{ .timeout = opts.timeout });
+    try c.registerKindsAndSend(&r, kinds, .completed_orders_end, &buffer, timeout, .req_completed_orders, proto.CompletedOrdersRequest{
+        .apiOnly = opts.api_only,
+    });
+    defer r.deinit();
+
+    var items: std.ArrayList(orders.Order) = .empty;
+    errdefer {
+        for (items.items) |*item| item.deinit(gpa);
+        items.deinit(gpa);
+    }
+    while (try c.nextResponse(&r, opts.diagnostics)) |msg| {
+        var m = msg;
+        defer m.deinit(c.gpa);
+        switch (m) {
+            .completed_order => |o| {
+                try items.ensureUnusedCapacity(gpa, 1);
+                items.appendAssumeCapacity(try orders.Order.fromCompletedOrder(gpa, o));
+            },
+            .completed_orders_end => {},
+            else => return error.UnexpectedResponse,
+        }
+    }
+    return .{ .gpa = gpa, .items = try items.toOwnedSlice(gpa) };
 }
 
 // ---------------------------------------------------------------------------
@@ -795,7 +917,7 @@ fn findRouteLocked(c: *Client, m: Incoming) ?*Responses {
     if (m.requestId()) |id| return c.by_req_id.get(id);
     const id = m.msgId();
     for (c.by_kind.items) |r| {
-        if (r.key.kind == id) return r;
+        if (std.mem.indexOfScalar(wire.InMsg, r.key.kinds, id) != null) return r;
     }
     return null;
 }
@@ -805,7 +927,7 @@ fn removeRouteLocked(c: *Client, r: *Responses) void {
         .req_id => |id| {
             if (c.by_req_id.get(id) == r) _ = c.by_req_id.remove(id);
         },
-        .kind => {
+        .kinds => {
             for (c.by_kind.items, 0..) |item, i| {
                 if (item == r) {
                     _ = c.by_kind.orderedRemove(i);
@@ -1392,6 +1514,191 @@ test "snapshots of stocks and options, rejections and timeouts" {
         try testing.expectEqual(@as(i32, 354), diag.code);
 
         try testing.expectError(error.Timeout, c.snapshot(contract.Query.byConId(2, "SMART"), .{ .timeout = millis(100) }));
+    }
+    try script.await(io);
+}
+
+fn serveOrders(server: *FakeServer) !void {
+    const gpa = testing.allocator;
+    const conn = try server.accept(testing.io, gpa);
+    defer conn.deinit();
+    try conn.handshake(0);
+
+    // 1. All open orders: an API order and two orders entered in TWS.
+    {
+        const req = try conn.readRequest();
+        try testing.expectEqual(wire.OutMsg.req_all_open_orders, req.id);
+        try conn.send(.open_order, proto.OpenOrder{
+            .orderId = 5,
+            .contract = .{ .conId = 265598, .symbol = "AAPL", .secType = "STK", .exchange = "SMART", .currency = "USD" },
+            .order = .{ .orderId = 5, .clientId = 3, .permId = 1001, .action = "BUY", .totalQuantity = "100", .orderType = "LMT", .lmtPrice = 180, .tif = "DAY", .account = "DU0000001" },
+            .orderState = .{ .status = "Submitted" },
+        });
+        try conn.send(.order_status, proto.OrderStatus{ .orderId = 5, .clientId = 3, .permId = 1001, .status = "Submitted", .filled = "40", .remaining = "60", .avgFillPrice = 179.9 });
+        // Not related to the request: goes to the notices.
+        try conn.send(.error_message, proto.ErrorMessage{ .id = -1, .errorCode = 2106, .errorMsg = "HMDS data farm connection is OK" });
+        try conn.send(.open_order, proto.OpenOrder{
+            .orderId = 0,
+            .contract = .{ .conId = 272093, .symbol = "MSFT", .secType = "STK" },
+            .order = .{ .clientId = 0, .permId = 2002, .action = "SELL", .totalQuantity = "10", .orderType = "STP", .auxPrice = 300, .tif = "GTC" },
+            .orderState = .{ .status = "PreSubmitted" },
+        });
+        try conn.send(.open_order, proto.OpenOrder{
+            .orderId = 0,
+            .contract = .{ .conId = 76792991, .symbol = "TSLA", .secType = "STK" },
+            .order = .{ .clientId = 0, .permId = 2003, .action = "BUY", .totalQuantity = "1", .orderType = "MKT" },
+            .orderState = .{ .status = "PreSubmitted" },
+        });
+        try conn.send(.order_status, proto.OrderStatus{ .orderId = 0, .permId = 2002, .status = "PreSubmitted", .filled = "0", .remaining = "10" });
+        try conn.send(.open_order_end, proto.OpenOrdersEnd{});
+    }
+    // 2. Orders of this client: none.
+    {
+        const req = try conn.readRequest();
+        try testing.expectEqual(wire.OutMsg.req_open_orders, req.id);
+        try conn.send(.open_order_end, proto.OpenOrdersEnd{});
+    }
+    // 3. Completed orders.
+    {
+        const req = try conn.readRequest();
+        try testing.expectEqual(wire.OutMsg.req_completed_orders, req.id);
+        var q = try req.decode(proto.CompletedOrdersRequest, gpa);
+        defer q.deinit(gpa);
+        try testing.expectEqual(@as(?bool, true), q.apiOnly);
+        try conn.send(.completed_order, proto.CompletedOrder{
+            .contract = .{ .symbol = "AAPL" },
+            .order = .{ .permId = 999, .action = "SELL", .totalQuantity = "50", .filledQuantity = "50" },
+            .orderState = .{ .status = "Filled", .completedTime = "20261118 15:30:00 Europe/Prague", .completedStatus = "Filled Size: 50" },
+        });
+        try conn.send(.completed_order, proto.CompletedOrder{
+            .contract = .{ .symbol = "AAPL" },
+            .order = .{ .permId = 1000, .action = "BUY", .totalQuantity = "50", .filledQuantity = "0" },
+            .orderState = .{ .status = "Cancelled", .completedStatus = "Cancelled by Trader" },
+        });
+        try conn.send(.completed_orders_end, proto.CompletedOrdersEnd{});
+    }
+    // 4. No answer: the request times out.
+    {
+        const req = try conn.readRequest();
+        try testing.expectEqual(wire.OutMsg.req_all_open_orders, req.id);
+    }
+    // 5. The next request shows that the client gave up request 4, so this
+    // update belongs to no request.
+    {
+        const req = try conn.readRequest();
+        try testing.expectEqual(wire.OutMsg.req_current_time, req.id);
+        try conn.send(.order_status, proto.OrderStatus{ .orderId = 5, .clientId = 3, .permId = 1001, .status = "Filled", .filled = "100", .remaining = "0" });
+        try conn.send(.current_time, proto.CurrentTime{ .currentTime = 42 });
+    }
+    try conn.expectClose();
+}
+
+test "open and completed orders" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    var server = try FakeServer.listen(io);
+    defer server.deinit(io);
+    var script = try io.concurrent(serveOrders, .{&server});
+    defer script.cancel(io) catch {};
+
+    const c = try Client.connect(io, gpa, .{ .port = server.port });
+    {
+        defer c.close();
+
+        var all = try c.openOrders(gpa, .all_clients, .{});
+        defer all.deinit();
+        try testing.expectEqual(@as(usize, 3), all.items.len);
+
+        const aapl = &all.items[0];
+        try testing.expectEqual(@as(i32, 5), aapl.order_id);
+        try testing.expectEqualStrings("AAPL", aapl.contract.symbol.?);
+        try testing.expectEqual(orders.Status.submitted, aapl.statusKind());
+        try testing.expectEqual(@as(?orders.Action, .buy), aapl.action());
+        try testing.expectEqual(@as(?f64, 40), aapl.filledQuantity());
+        try testing.expectEqual(@as(?f64, 60), aapl.remainingQuantity());
+        try testing.expectEqual(@as(?f64, 179.9), aapl.avgFillPrice());
+        try testing.expectEqualStrings("DU0000001", aapl.account().?);
+
+        const msft = &all.items[1];
+        try testing.expectEqual(@as(?i64, 2002), msft.permId());
+        try testing.expectEqual(@as(?f64, 300), msft.auxPrice());
+        try testing.expectEqual(@as(?f64, 10), msft.remainingQuantity());
+
+        const tsla = &all.items[2];
+        try testing.expectEqual(@as(?proto.OrderStatus, null), tsla.status);
+        try testing.expectEqual(orders.Status.pre_submitted, tsla.statusKind());
+
+        var mine = try c.openOrders(gpa, .this_client, .{});
+        defer mine.deinit();
+        try testing.expectEqual(@as(usize, 0), mine.items.len);
+
+        var done = try c.completedOrders(gpa, .{ .api_only = true });
+        defer done.deinit();
+        try testing.expectEqual(@as(usize, 2), done.items.len);
+        try testing.expectEqual(orders.Status.filled, done.items[0].statusKind());
+        try testing.expectEqualStrings("Filled Size: 50", done.items[0].state.completedStatus.?);
+        try testing.expectEqual(orders.Status.cancelled, done.items[1].statusKind());
+
+        try testing.expectError(error.Timeout, c.openOrders(gpa, .all_clients, .{ .timeout = millis(100) }));
+        try testing.expectEqual(@as(i64, 42), try c.currentTime());
+
+        // Notices: 2104 from the handshake, 2106 from the middle of the
+        // first request, then the unsolicited status update.
+        var n1 = (try c.nextNotice(seconds(5))).?;
+        defer n1.deinit(gpa);
+        try testing.expectEqual(@as(?i32, 2104), n1.error_message.errorCode);
+        var n2 = (try c.nextNotice(seconds(5))).?;
+        defer n2.deinit(gpa);
+        try testing.expectEqual(@as(?i32, 2106), n2.error_message.errorCode);
+        var n3 = (try c.nextNotice(seconds(5))).?;
+        defer n3.deinit(gpa);
+        try testing.expectEqualStrings("Filled", n3.order_status.status.?);
+    }
+    try script.await(io);
+}
+
+fn serveOrdersAndTime(server: *FakeServer) !void {
+    const gpa = testing.allocator;
+    const conn = try server.accept(testing.io, gpa);
+    defer conn.deinit();
+    try conn.handshake(0);
+
+    // Both requests arrive in either order; the answers are interleaved.
+    var seen: [2]wire.OutMsg = undefined;
+    for (&seen) |*s| s.* = (try conn.readRequest()).id;
+    try testing.expect(std.mem.indexOfScalar(wire.OutMsg, &seen, .req_current_time) != null);
+    try testing.expect(std.mem.indexOfScalar(wire.OutMsg, &seen, .req_all_open_orders) != null);
+
+    try conn.send(.open_order, proto.OpenOrder{ .orderId = 1, .order = .{ .clientId = 0, .permId = 7, .action = "BUY", .totalQuantity = "1" } });
+    try conn.send(.current_time, proto.CurrentTime{ .currentTime = 42 });
+    try conn.send(.order_status, proto.OrderStatus{ .orderId = 1, .clientId = 0, .permId = 7, .status = "Submitted" });
+    try conn.send(.open_order_end, proto.OpenOrdersEnd{});
+    try conn.expectClose();
+}
+
+fn openOrdersTask(c: *Client) !usize {
+    var list = try c.openOrders(testing.allocator, .all_clients, .{});
+    defer list.deinit();
+    try testing.expectEqual(orders.Status.submitted, list.items[0].statusKind());
+    return list.items.len;
+}
+
+test "open orders and another request run concurrently" {
+    const io = testing.io;
+    var server = try FakeServer.listen(io);
+    defer server.deinit(io);
+    var script = try io.concurrent(serveOrdersAndTime, .{&server});
+    defer script.cancel(io) catch {};
+
+    const c = try Client.connect(io, testing.allocator, .{ .port = server.port });
+    {
+        defer c.close();
+        var a = try io.concurrent(openOrdersTask, .{c});
+        defer _ = a.cancel(io) catch {};
+        var b = try io.concurrent(currentTimeTask, .{c});
+        defer _ = b.cancel(io) catch {};
+        try testing.expectEqual(@as(usize, 1), try a.await(io));
+        try testing.expectEqual(@as(i64, 42), try b.await(io));
     }
     try script.await(io);
 }
