@@ -67,6 +67,11 @@ These rules apply to every contributor, human or AI agent. Read this file and
   that request's caller; others go to the client's notice stream.
   Do not silently drop them.
 - No global mutable state.
+- **Every operation that waits must have a timeout**: connecting, each
+  request, each write, waiting for notices or subscription data. Defaults
+  live in `Client.Options`; waiting forever is never the default. The only
+  exception is the internal reader task idling between messages, because
+  every caller waiting for its results has its own deadline.
 
 ## Code style
 

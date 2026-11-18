@@ -97,6 +97,9 @@ and awaited later, so several requests run concurrently on one connection.
 - [x] `nextValidId`, `managedAccounts` (from the handshake), `currentTime()`
 - [x] Fake TWS server for tests (scripted, over a loopback socket)
 - [x] Clean shutdown: cancel the reader task, close socket, fail pending requests
+- [x] Timeouts everywhere: `connect_timeout` (TCP + handshake), `request_timeout`
+      (whole request), `write_timeout` (per message, a timed-out write closes the
+      connection), explicit timeout for `nextNotice`
 
 ### M2 — Contract details
 - [ ] `contractDetails()` — request, collect `ContractData` until `ContractDataEnd`
@@ -144,5 +147,8 @@ and awaited later, so several requests run concurrently on one connection.
 ## Open questions
 - Behaviour against a real TWS / IB Gateway still has to be checked with a
   paper account (integration tests, M6).
-- `connect` has no timeout yet; a caller can cancel it via `io.async` +
-  `Future.cancel`. Decide whether a built-in timeout option is wanted.
+- `std.Io.Threaded` in Zig 0.17.1 does not implement TCP connect timeouts
+  (it panics), so `connect` races the connection attempt against a timer.
+  Replace with `ConnectOptions.timeout` once Zig implements it.
+- Per-call timeout overrides for high-level requests (currently the client-wide
+  `request_timeout`) — add when a request type needs a different limit.

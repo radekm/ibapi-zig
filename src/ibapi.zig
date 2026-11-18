@@ -22,6 +22,11 @@ pub const Client = @import("Client.zig");
 pub const Incoming = @import("incoming.zig").Incoming;
 
 test {
+    _ = @import("mailbox.zig");
+    _ = @import("Transport.zig");
+}
+
+test {
     std.testing.refAllDecls(@This());
 }
 

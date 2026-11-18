@@ -70,6 +70,10 @@ pub fn main(init: std.process.Init) !void {
 }
 ```
 
+Every operation has a timeout: `connect_timeout`, `request_timeout` and
+`write_timeout` in `ibapi.Client.Options` (defaults 10 s, 10 s and 5 s),
+and `nextNotice` takes one explicitly. Timeouts are reported as `error.Timeout`.
+
 Requests can run concurrently on one connection, e.g.
 `var f = io.async(ibapi.Client.currentTime, .{client});` and later `try f.await(io)`.
 Messages that belong to no request (informational errors etc.) are read with

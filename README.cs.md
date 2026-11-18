@@ -69,6 +69,10 @@ pub fn main(init: std.process.Init) !void {
 }
 ```
 
+Každá operace má timeout: `connect_timeout`, `request_timeout` a
+`write_timeout` v `ibapi.Client.Options` (výchozí 10 s, 10 s a 5 s) a
+`nextNotice` ho dostává explicitně. Vypršení se hlásí jako `error.Timeout`.
+
 Požadavky mohou na jednom spojení běžet souběžně, např.
 `var f = io.async(ibapi.Client.currentTime, .{client});` a později `try f.await(io)`.
 Zprávy, které nepatří k žádnému požadavku (informativní chyby apod.), se čtou
