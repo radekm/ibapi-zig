@@ -1,0 +1,94 @@
+# AGENTS.md — rules for working on ibapi-zig
+
+These rules apply to every contributor, human or AI agent. Read this file and
+`PLAN.md` before making changes.
+
+## Communication
+
+- Chat with the project owner in **Czech**.
+- Code, identifiers, code comments and commit messages are in **English**.
+- User documentation is written in **both English and Czech**, in separate
+  files that link to each other: `README.md` + `README.cs.md`, and
+  `docs/en/…` + `docs/cs/…`. Both versions must be kept in sync in the same
+  commit. `AGENTS.md` and `PLAN.md` are internal and stay English only.
+- When unsure about anything (API design, IB protocol behaviour, scope), **ask**
+  instead of guessing.
+
+## Toolchain and dependencies
+
+- Language: **Zig 0.17.1** exactly. Do not use features from `master`.
+- Allowed dependencies: **only** [zig-protobuf](https://github.com/Arwalk/zig-protobuf)
+  (and the `protoc` binaries it fetches lazily). Adding any other dependency
+  requires explicit approval from the owner first.
+- Dependencies are pinned in `build.zig.zon` by URL + hash.
+
+## Protocol scope
+
+- The library speaks **only the protobuf variant** of the TWS API.
+  Minimum server version is **213** (`PROTOBUF_REST_MESSAGES_3`, TWS / IB Gateway 10.40+).
+  Connecting to an older server fails right after the handshake with
+  `error.ServerVersionTooOld`. No fallback to the legacy text protocol.
+- The `.proto` files from IB are GPL v3 licensed and are **never committed**
+  to this repository (it is zlib licensed). Users pass them to the build with
+  `-Dproto-dir=<dir>`. The reference version is **TWS API 10.52.01**; keep
+  the README in sync when it changes.
+- Zig code for the messages is **generated at build time** into the build
+  cache by zig-protobuf and is never committed either.
+- Do not copy code from IB's clients or other TWS API libraries into this
+  repository; use them only as a reference for protocol behaviour.
+
+## License
+
+- The repository is licensed under **zlib** (`LICENSE`). Every contribution
+  must be compatible with it.
+
+## Safety
+
+- Phase 1 of the project is **read-only**. Code must never place, modify or
+  cancel orders until the plan explicitly reaches that phase.
+- Integration tests run only against a **paper trading** account and are
+  opt-in (`zig build test-integration`). They must never send order-changing
+  requests.
+- Never commit credentials, account numbers, host names of private machines
+  or recorded data containing account identifiers. Anonymise captured
+  messages used as test fixtures.
+
+## Architecture rules
+
+- Concurrency and I/O go through **`std.Io`** (passed in by the caller as
+  `io: std.Io`). Never call blocking OS APIs directly, never spawn raw threads.
+- Every allocating function takes an explicit `std.mem.Allocator`.
+  Document who owns returned memory and how to free it.
+- Public API is split into:
+  - `ibapi.wire` — framing and handshake (no knowledge of individual messages),
+  - `ibapi.proto` — generated protobuf types (re-exported),
+  - `ibapi.Client` — the asynchronous client (request routing, typed results).
+- Errors from TWS (`ErrorMessage`) that belong to a request are delivered to
+  that request's caller; others go to the client's notice stream.
+  Do not silently drop them.
+- No global mutable state.
+
+## Code style
+
+- Run `zig fmt` on all sources; CI rejects unformatted code.
+- Every public declaration has a `///` doc comment.
+- Prefer small files with one responsibility; tests live next to the code
+  (`test "..." {}` blocks) unless they need fixtures.
+- Use `std.log.scoped(.ibapi)` for logging; the library never prints to stdout.
+
+## Testing
+
+- `zig build test -Dproto-dir=<dir>` must pass before every commit. It runs unit tests and
+  tests against an in-process **fake TWS server** that replays recorded frames.
+- New message support = encoder/decoder tests + at least one fake-server test.
+- `zig build test-integration` (opt-in) needs a running paper TWS / Gateway;
+  host and port come from env vars `IBAPI_HOST`, `IBAPI_PORT`, `IBAPI_CLIENT_ID`.
+
+## Workflow
+
+- Work in small steps that follow `PLAN.md`. After finishing a step, tick it
+  in `PLAN.md` in the same commit.
+- If the plan turns out to be wrong, update `PLAN.md` (and tell the owner)
+  before diverging from it.
+- Commit messages: imperative mood, short summary line, body explaining *why*.
+- Use **only the `main` branch**. Do not create other branches or PRs.

@@ -1,0 +1,6 @@
+.zig-cache/
+zig-out/
+zig-pkg/
+# The TWS API .proto files are GPL-licensed and must not be committed.
+proto/
+*.proto
