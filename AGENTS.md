@@ -28,12 +28,13 @@ These rules apply to every contributor, human or AI agent. Read this file and
   Minimum server version is **213** (`PROTOBUF_REST_MESSAGES_3`, TWS / IB Gateway 10.40+).
   Connecting to an older server fails right after the handshake with
   `error.ServerVersionTooOld`. No fallback to the legacy text protocol.
-- The `.proto` files from IB are GPL v3 licensed and are **never committed**
-  to this repository (it is zlib licensed). Users pass them to the build with
-  `-Dproto-dir=<dir>`. The reference version is **TWS API 10.52.01**; keep
-  the README in sync when it changes.
-- Zig code for the messages is **generated at build time** into the build
-  cache by zig-protobuf and is never committed either.
+- The `.proto` files from IB are **not committed**. The Zig code generated
+  from them **is committed** in `src/proto/protobuf.pb.zig`, so building
+  and testing need neither the `.proto` files nor protoc.
+- The reference version is **TWS API 10.52.01**. To update, run
+  `zig build gen-proto -Dproto-dir=<twsapi>/source/proto` and commit the
+  result together with the version change in the READMEs.
+- Never edit `src/proto` by hand; it is excluded from `zig fmt`.
 - Do not copy code from IB's clients or other TWS API libraries into this
   repository; use them only as a reference for protocol behaviour.
 
@@ -75,7 +76,8 @@ These rules apply to every contributor, human or AI agent. Read this file and
 
 ## Code style
 
-- Run `zig fmt` on all sources; CI rejects unformatted code.
+- Run `zig fmt` on all sources (except the generated `src/proto`); CI rejects
+  unformatted code.
 - Every public declaration has a `///` doc comment.
 - Prefer small files with one responsibility; tests live next to the code
   (`test "..." {}` blocks) unless they need fixtures.
@@ -83,7 +85,7 @@ These rules apply to every contributor, human or AI agent. Read this file and
 
 ## Testing
 
-- `zig build test -Dproto-dir=<dir>` must pass before every commit. It runs unit tests and
+- `zig build test` must pass before every commit (CI runs it too). It runs unit tests and
   tests against an in-process **fake TWS server** that replays recorded frames.
 - New message support = encoder/decoder tests + at least one fake-server test.
 - `zig build test-integration` (opt-in) needs a running paper TWS / Gateway;

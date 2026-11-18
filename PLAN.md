@@ -11,8 +11,8 @@ management comes later.
 | Language | Zig 0.17.1 |
 | Protocol | Protobuf only, server version ≥ 213 (TWS / IB Gateway 10.40+) |
 | License | zlib |
-| `.proto` files | Not in the repo (GPL v3); supplied via `-Dproto-dir`, reference version TWS API 10.52.01 |
-| Code generation | protoc + zig-protobuf generator at build time, output in the build cache |
+| `.proto` files | Not in the repo; reference version TWS API 10.52.01 |
+| Code generation | `zig build gen-proto -Dproto-dir=…` (protoc + zig-protobuf); output `src/proto/protobuf.pb.zig` is committed |
 | Documentation | English and Czech in separate files (`README.md` / `README.cs.md`, `docs/en` / `docs/cs`) |
 | Branches | `main` only |
 | Concurrency | Asynchronous API on top of `std.Io` (futures, queues, groups) |
@@ -81,11 +81,10 @@ and awaited later, so several requests run concurrently on one connection.
 
 ### M0 — Project skeleton
 - [x] AGENTS.md, PLAN.md
-- [x] `build.zig` / `build.zig.zon` with zig-protobuf, `-Dproto-dir`, codegen into the cache, `ibapi` module
+- [x] `build.zig` / `build.zig.zon` with zig-protobuf, `gen-proto` step, committed generated code, `ibapi` module
 - [x] `zig build test` with a protobuf round-trip test of a generated message
 - [x] README in English and Czech, zlib LICENSE
-- [x] GitHub Actions: `zig fmt --check` and build script check
-      (tests cannot run in CI because the `.proto` files are not public)
+- [x] GitHub Actions: `zig fmt --check` and `zig build test`
 
 ### M1 — Transport and connection
 - [x] `wire`: frame reader/writer over `std.Io.Reader` / `std.Io.Writer` (+ unit tests)

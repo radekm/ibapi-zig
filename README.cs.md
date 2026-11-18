@@ -14,25 +14,29 @@ Workstation (TWS) nebo IB Gateway pomocí **protobuf** varianty TWS API.
 
 - Zig **0.17.1**
 - TWS nebo IB Gateway **10.40 nebo novější** (server version ≥ 213) se zapnutým API
-- Soubory `.proto` z TWS API — vyvíjeno a testováno s **TWS API 10.52.01**
-
-## Jak získat soubory `.proto`
-
-Soubory `.proto` vydává Interactive Brokers pod licencí GPL v3 a v tomto
-repozitáři **nejsou**. Stáhněte TWS API z <https://interactivebrokers.github.io/>
-a rozbalte ho; soubory jsou v `source/proto` (nebo v `proto` samostatného
-archivu s protobufem).
 
 ## Sestavení
 
 ```sh
-zig build test -Dproto-dir=/cesta/k/twsapi/source/proto
+zig build test
 ```
 
-Build spustí `protoc` s generátorem [zig-protobuf](https://github.com/Arwalk/zig-protobuf)
-a vygenerovaný kód v Zigu uloží do build cache. Ve výchozím stavu si
-zig-protobuf stáhne `protoc` 36.2; vlastní `protoc` nastavíte přes
-`-Dprotoc=/cesta/k/protoc`.
+## Protobuf zprávy
+
+Typy zpráv TWS API v Zigu jsou vygenerované ze souborů `.proto` z
+**TWS API 10.52.01** pomocí [zig-protobuf](https://github.com/Arwalk/zig-protobuf)
+a uložené v `src/proto/protobuf.pb.zig`. Samotné soubory `.proto` v
+repozitáři nejsou.
+
+Pro jinou verzi TWS API ji stáhněte z <https://interactivebrokers.github.io/>,
+rozbalte a spusťte:
+
+```sh
+zig build gen-proto -Dproto-dir=/cesta/k/twsapi/source/proto
+```
+
+Ve výchozím stavu si zig-protobuf stáhne `protoc` 36.2; vlastní `protoc`
+nastavíte přes `-Dprotoc=/cesta/k/protoc`.
 
 ## Použití jako závislost
 
@@ -43,11 +47,7 @@ zig fetch --save "git+https://github.com/radekm/ibapi-zig#main"
 V `build.zig`:
 
 ```zig
-const ibapi_dep = b.dependency("ibapi_zig", .{
-    .target = target,
-    .optimize = optimize,
-    .@"proto-dir" = "/cesta/k/twsapi/source/proto",
-});
+const ibapi_dep = b.dependency("ibapi_zig", .{ .target = target, .optimize = optimize });
 exe.root_module.addImport("ibapi", ibapi_dep.module("ibapi"));
 ```
 
@@ -81,8 +81,5 @@ přes `client.nextNotice()`. Viz [popis protokolu](docs/cs/protocol.md).
 ## Licence
 
 ibapi-zig je pod [licencí zlib](LICENSE).
-
-Soubory `.proto` z TWS API, které dodáte, jsou © Interactive Brokers LLC
-pod licencí GPL v3 nebo novější. Na kód z nich vygenerovaný a programy,
-které ho obsahují, se tato licence může vztahovat — ověřte si to pro svůj
-případ použití.
+Definice zpráv v `src/proto` jsou vygenerované ze souborů `.proto` TWS API
+od Interactive Brokers LLC.
