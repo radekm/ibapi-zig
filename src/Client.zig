@@ -28,6 +28,7 @@ const Incoming = @import("incoming.zig").Incoming;
 const Mailbox = @import("mailbox.zig").Mailbox;
 const Transport = @import("Transport.zig");
 const contract = @import("contract.zig");
+const market_data = @import("market_data.zig");
 
 const log = std.log.scoped(.ibapi);
 
@@ -43,6 +44,7 @@ write_buffer: [16 * 1024]u8,
 frame: std.ArrayList(u8),
 
 request_timeout: Io.Duration,
+snapshot_timeout: Io.Duration,
 write_timeout: Io.Duration,
 
 /// Serialises writers of whole frames.
@@ -108,8 +110,14 @@ pub const Options = struct {
     connect_timeout: Io.Duration = .fromSeconds(10),
     /// Default limit for a whole request (sending it and receiving all responses).
     request_timeout: Io.Duration = .fromSeconds(10),
+    /// Default limit for `snapshot`. TWS may take up to about 11 seconds to
+    /// complete a snapshot, so this is longer than `request_timeout`.
+    snapshot_timeout: Io.Duration = .fromSeconds(15),
     /// Limit for sending one message.
     write_timeout: Io.Duration = .fromSeconds(5),
+    /// Market data requested by `snapshot`. `.frozen` returns live data while
+    /// the market is open and the last values when it is closed.
+    market_data_type: market_data.MarketDataType = .frozen,
 };
 
 /// Identifies which messages a `Responses` receives.
@@ -197,6 +205,7 @@ pub fn connect(io: Io, gpa: Allocator, options: Options) ConnectError!*Client {
         .write_buffer = undefined,
         .frame = .empty,
         .request_timeout = options.request_timeout,
+        .snapshot_timeout = options.snapshot_timeout,
         .write_timeout = options.write_timeout,
         .write_mutex = .init,
         .server_version = 0,
@@ -224,6 +233,11 @@ pub fn connect(io: Io, gpa: Allocator, options: Options) ConnectError!*Client {
     // From now on the reader waits for messages indefinitely; requests have
     // their own deadlines.
     c.transport.read_timeout = .none;
+
+    // Applies to all following market data requests of this connection.
+    try c.send(.req_market_data_type, proto.MarketDataTypeRequest{
+        .marketDataType = @backingInt(options.market_data_type),
+    });
 
     c.reader_task = io.concurrent(readLoop, .{c}) catch return error.ConcurrencyUnavailable;
     return c;
@@ -372,10 +386,12 @@ pub const RequestError = Error || error{
     UnexpectedResponse,
 };
 
-/// Whether a TWS error code is only a warning that does not end a request
-/// (codes 2100–2199, e.g. 2104 "market data farm connection is OK").
+/// Whether a TWS error code is only a warning that does not end a request:
+/// 2100–2199 (connection status, e.g. 2104 "market data farm connection is
+/// OK"), 10090 (part of the requested market data is not subscribed) and
+/// 10167 (displaying delayed market data).
 pub fn isWarningCode(code: i32) bool {
-    return code >= 2100 and code < 2200;
+    return (code >= 2100 and code < 2200) or code == 10090 or code == 10167;
 }
 
 /// A list of protobuf messages returned by a request, allocated with `gpa`.
@@ -482,8 +498,59 @@ pub fn searchSymbols(c: *Client, gpa: Allocator, pattern: []const u8, opts: Requ
     return .{ .gpa = gpa, .samples = try msg.symbol_samples.dupe(gpa) };
 }
 
+/// Returns a snapshot of the market data of one contract: bid, ask, last,
+/// sizes, daily open/high/low/close and volume; for options also the values
+/// of the TWS option model (implied volatility, greeks, underlying price).
+///
+/// The kind of data follows `Options.market_data_type`. Without a market
+/// data subscription for the contract TWS rejects the request (error 354)
+/// with `error.RequestRejected`. The default limit is
+/// `Options.snapshot_timeout`; on timeout the request is cancelled.
+/// Several snapshots may run concurrently (`io.async`), within the TWS
+/// limit of simultaneous market data lines (usually 100).
+pub fn snapshot(c: *Client, query: contract.Query, opts: RequestOptions) RequestError!market_data.Quote {
+    const req_id = c.nextRequestId();
+    var buffer: [32]Incoming = undefined;
+    var r: Responses = undefined;
+    const timeout: Io.Timeout = .{ .duration = .{ .raw = opts.timeout orelse c.snapshot_timeout, .clock = .awake } };
+    try c.register(&r, .{ .req_id = req_id }, .tick_snapshot_end, &buffer, timeout);
+    defer r.deinit();
+
+    try c.send(.req_mkt_data, proto.MarketDataRequest{
+        .reqId = req_id,
+        .contract = query.toProto(),
+        .snapshot = true,
+    });
+    return c.collectQuote(&r, opts.diagnostics) catch |err| {
+        if (err == error.Timeout or err == error.Canceled) {
+            c.send(.cancel_mkt_data, proto.CancelMarketData{ .reqId = req_id }) catch |e| {
+                log.debug("cannot cancel market data request {d}: {t}", .{ req_id, e });
+            };
+        }
+        return err;
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Internals
+
+fn collectQuote(c: *Client, r: *Responses, diagnostics: ?*Diagnostics) RequestError!market_data.Quote {
+    var q: market_data.Quote = .{};
+    while (try c.nextResponse(r, diagnostics)) |msg| {
+        var m = msg;
+        defer m.deinit(c.gpa);
+        switch (m) {
+            .tick_price => |t| market_data.applyPrice(&q, t),
+            .tick_size => |t| market_data.applySize(&q, t),
+            .tick_string => |t| market_data.applyString(&q, t),
+            .tick_option_computation => |t| market_data.applyOptionComputation(&q, t),
+            .market_data_type => |t| q.data_type = if (t.marketDataType) |v| @fromBackingInt(@intCast(v)) else null,
+            .tick_generic, .tick_req_params, .tick_snapshot_end => {},
+            else => return error.UnexpectedResponse,
+        }
+    }
+    return q;
+}
 
 fn timeoutFor(c: *const Client, opts: RequestOptions) Io.Timeout {
     return .{ .duration = .{ .raw = opts.timeout orelse c.request_timeout, .clock = .awake } };
@@ -1202,6 +1269,129 @@ test "option chain parameters are collected per exchange" {
         try testing.expectEqualStrings("20261218", smart.expirations.items[2]);
         try testing.expectEqual(@as(f64, 200), smart.strikes.items[4]);
         try testing.expectEqualStrings("CBOE", chain.items[1].exchange.?);
+    }
+    try script.await(io);
+}
+
+fn serveSnapshots(server: *FakeServer) !void {
+    const gpa = testing.allocator;
+    const conn = try server.accept(testing.io, gpa);
+    defer conn.deinit();
+    try conn.handshake(0);
+    try testing.expectEqual(@as(i32, 2), conn.market_data_type); // frozen by default
+
+    // 1. Stock.
+    {
+        const req = try conn.readRequest();
+        try testing.expectEqual(wire.OutMsg.req_mkt_data, req.id);
+        var q = try req.decode(proto.MarketDataRequest, gpa);
+        defer q.deinit(gpa);
+        try testing.expectEqual(@as(?bool, true), q.snapshot);
+        try testing.expectEqual(@as(?i32, 265598), q.contract.?.conId);
+        try testing.expectEqualStrings("SMART", q.contract.?.exchange.?);
+        const id = q.reqId;
+        try conn.send(.market_data_type, proto.MarketDataType{ .reqId = id, .marketDataType = 2 });
+        try conn.send(.tick_req_params, proto.TickReqParams{ .reqId = id, .minTick = "0.01" });
+        try conn.send(.tick_price, proto.TickPrice{ .reqId = id, .tickType = 1, .price = 189.5, .size = "300" });
+        try conn.send(.tick_price, proto.TickPrice{ .reqId = id, .tickType = 2, .price = 189.6, .size = "200" });
+        try conn.send(.error_message, proto.ErrorMessage{ .id = id, .errorCode = 10090, .errorMsg = "Part of requested market data is not subscribed." });
+        try conn.send(.tick_price, proto.TickPrice{ .reqId = id, .tickType = 4, .price = 189.55, .size = "100" });
+        try conn.send(.tick_price, proto.TickPrice{ .reqId = id, .tickType = 9, .price = 188.1 });
+        try conn.send(.tick_size, proto.TickSize{ .reqId = id, .tickType = 8, .size = "1234567" });
+        try conn.send(.tick_string, proto.TickString{ .reqId = id, .tickType = 45, .value = "1763478840" });
+        try conn.send(.tick_snapshot_end, proto.TickSnapshotEnd{ .reqId = id });
+    }
+    // 2. Option with model values.
+    {
+        const req = try conn.readRequest();
+        var q = try req.decode(proto.MarketDataRequest, gpa);
+        defer q.deinit(gpa);
+        try testing.expectEqualStrings("OPT", q.contract.?.secType.?);
+        const id = q.reqId;
+        try conn.send(.tick_price, proto.TickPrice{ .reqId = id, .tickType = 1, .price = 7.8, .size = "12" });
+        try conn.send(.tick_price, proto.TickPrice{ .reqId = id, .tickType = 2, .price = 7.95, .size = "8" });
+        try conn.send(.tick_option_computation, proto.TickOptionComputation{
+            .reqId = id,
+            .tickType = 10,
+            .impliedVol = 0.248,
+            .delta = 0.51,
+            .optPrice = 7.8,
+            .pvDividend = 0.24,
+            .gamma = 0.021,
+            .vega = 0.31,
+            .theta = -0.045,
+            .undPrice = 189.55,
+        });
+        try conn.send(.tick_option_computation, proto.TickOptionComputation{
+            .reqId = id,
+            .tickType = 13,
+            .impliedVol = 0.25,
+            .delta = 0.52,
+            .optPrice = 7.87,
+            .pvDividend = 0.24,
+            .gamma = 0.021,
+            .vega = 0.31,
+            .theta = -0.046,
+            .undPrice = 189.55,
+        });
+        try conn.send(.tick_snapshot_end, proto.TickSnapshotEnd{ .reqId = id });
+    }
+    // 3. No subscription.
+    {
+        const req = try conn.readRequest();
+        var q = try req.decode(proto.MarketDataRequest, gpa);
+        defer q.deinit(gpa);
+        try conn.send(.error_message, proto.ErrorMessage{ .id = q.reqId, .errorCode = 354, .errorMsg = "Requested market data is not subscribed." });
+    }
+    // 4. No answer: the client times out and cancels.
+    {
+        const req = try conn.readRequest();
+        var q = try req.decode(proto.MarketDataRequest, gpa);
+        defer q.deinit(gpa);
+        const cancel = try conn.readRequest();
+        try testing.expectEqual(wire.OutMsg.cancel_mkt_data, cancel.id);
+        var cq = try cancel.decode(proto.CancelMarketData, gpa);
+        defer cq.deinit(gpa);
+        try testing.expectEqual(q.reqId, cq.reqId);
+    }
+    try conn.expectClose();
+}
+
+test "snapshots of stocks and options, rejections and timeouts" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    var server = try FakeServer.listen(io);
+    defer server.deinit(io);
+    var script = try io.concurrent(serveSnapshots, .{&server});
+    defer script.cancel(io) catch {};
+
+    const c = try Client.connect(io, gpa, .{ .port = server.port });
+    {
+        defer c.close();
+
+        const stock = try c.snapshot(contract.Query.byConId(265598, "SMART"), .{});
+        try testing.expectEqual(@as(?market_data.MarketDataType, .frozen), stock.data_type);
+        try testing.expectEqual(@as(?f64, 189.5), stock.bid);
+        try testing.expectEqual(@as(?f64, 200), stock.ask_size);
+        try testing.expectEqual(@as(?f64, 189.55), stock.last);
+        try testing.expectEqual(@as(?f64, 188.1), stock.close);
+        try testing.expectEqual(@as(?f64, 1234567), stock.volume);
+        try testing.expectEqual(@as(?i64, 1763478840), stock.last_timestamp);
+        try testing.expectEqual(@as(?market_data.OptionComputation, null), stock.model_computation);
+
+        const option = try c.snapshot(contract.Query.option("AAPL", "USD", "20261218", 190, .call), .{});
+        try testing.expectEqual(@as(?f64, 7.95), option.ask);
+        try testing.expectEqual(@as(?f64, 0.248), option.bid_computation.?.implied_vol);
+        const model = option.model_computation.?;
+        try testing.expectEqual(@as(?f64, 0.52), model.delta);
+        try testing.expectEqual(@as(?f64, -0.046), model.theta);
+        try testing.expectEqual(@as(?f64, 189.55), model.underlying_price);
+
+        var diag: Diagnostics = .{};
+        try testing.expectError(error.RequestRejected, c.snapshot(contract.Query.byConId(1, "SMART"), .{ .diagnostics = &diag }));
+        try testing.expectEqual(@as(i32, 354), diag.code);
+
+        try testing.expectError(error.Timeout, c.snapshot(contract.Query.byConId(2, "SMART"), .{ .timeout = millis(100) }));
     }
     try script.await(io);
 }

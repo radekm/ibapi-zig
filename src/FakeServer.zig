@@ -55,6 +55,8 @@ pub const Conn = struct {
     read_buffer: [4096]u8,
     write_buffer: [4096]u8,
     frame: std.ArrayList(u8),
+    /// Market data type selected by the client during the handshake.
+    market_data_type: i32 = 0,
 
     /// A request received from the client.
     pub const Request = struct {
@@ -96,7 +98,7 @@ pub const Conn = struct {
 
     /// Performs the server side of a successful handshake: hello, StartApi
     /// (checking the client id), managed accounts, one informational error
-    /// notice and the next valid order id.
+    /// notice, the next valid order id, and the client's market data type.
     pub fn handshake(conn: *Conn, client_id: i32) !void {
         try conn.expectHello();
         try conn.sendHello(wire.max_client_version);
@@ -114,6 +116,13 @@ pub const Conn = struct {
             .errorMsg = "Market data farm connection is OK:usfarm",
         });
         try conn.send(.next_valid_id, proto.NextValidId{ .orderId = 1 });
+
+        // The client selects the market data type right after connecting.
+        const mdt = try conn.readRequest();
+        try std.testing.expectEqual(wire.OutMsg.req_market_data_type, mdt.id);
+        var t = try mdt.decode(proto.MarketDataTypeRequest, conn.gpa);
+        defer t.deinit(conn.gpa);
+        conn.market_data_type = t.marketDataType orelse 0;
     }
 
     /// Reads the next request. The body is valid until the next read.

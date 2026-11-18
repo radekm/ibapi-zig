@@ -69,8 +69,9 @@ pub fn main(init: std.process.Init) !void {
 }
 ```
 
-Every operation has a timeout: `connect_timeout`, `request_timeout` and
-`write_timeout` in `ibapi.Client.Options` (defaults 10 s, 10 s and 5 s),
+Every operation has a timeout: `connect_timeout`, `request_timeout`,
+`snapshot_timeout` and `write_timeout` in `ibapi.Client.Options`
+(defaults 10 s, 10 s, 15 s and 5 s),
 and `nextNotice` takes one explicitly. Timeouts are reported as `error.Timeout`.
 
 Requests can run concurrently on one connection, e.g.
@@ -81,6 +82,7 @@ Messages that belong to no request (informational errors etc.) are read with
 ## Guides
 
 - [Looking up contracts and option chains](docs/en/contracts.md)
+- [Prices of stocks and options](docs/en/prices.md)
 - [Wire protocol](docs/en/protocol.md)
 
 ## Examples
@@ -91,6 +93,7 @@ export IBAPI_HOST=127.0.0.1 IBAPI_PORT=7497 IBAPI_CLIENT_ID=1   # defaults
 ./zig-out/bin/connect
 ./zig-out/bin/contracts details AAPL
 ./zig-out/bin/option_chain AAPL 45
+./zig-out/bin/quote AAPL 20261218 190 C
 ```
 
 ## License

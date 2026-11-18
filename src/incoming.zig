@@ -22,6 +22,14 @@ pub const Incoming = union(enum) {
     symbol_samples: proto.SymbolSamples,
     sec_def_opt_parameter: proto.SecDefOptParameter,
     sec_def_opt_parameter_end: proto.SecDefOptParameterEnd,
+    tick_price: proto.TickPrice,
+    tick_size: proto.TickSize,
+    tick_string: proto.TickString,
+    tick_generic: proto.TickGeneric,
+    tick_option_computation: proto.TickOptionComputation,
+    tick_req_params: proto.TickReqParams,
+    tick_snapshot_end: proto.TickSnapshotEnd,
+    market_data_type: proto.MarketDataType,
     /// A message this version of the library does not decode.
     other: Other,
 

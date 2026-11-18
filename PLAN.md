@@ -63,12 +63,7 @@ defer details.deinit();
 var chain = try client.optionChainParams(gpa, .{ .symbol = "AAPL", .con_id = 265598 }, .{});
 
 // Price snapshot (bid/ask/last/close, greeks for options).
-const quote = try client.snapshot(gpa, .{ .con_id = 265598, .exchange = "SMART" });
-
-// Streaming quotes — returns a Subscription with `next()` and `cancel()`.
-var sub = try client.subscribeMarketData(.{ .con_id = 265598, .exchange = "SMART" }, .{});
-defer sub.cancel();
-while (try sub.next()) |tick| { ... }
+const quote = try client.snapshot(ibapi.contract.Query.byConId(265598, "SMART"), .{});
 
 // Open orders of the account(s).
 const orders = try client.openOrders(gpa, .all_clients);
@@ -115,13 +110,17 @@ and awaited later, so several requests run concurrently on one connection.
       expiration come from `contractDetails`; documented in `docs/{en,cs}/contracts.md`
 - [x] Example `examples/option_chain.zig` (expirations within N days + strikes of the nearest)
 
-### M4 — Prices
-- [ ] `setMarketDataType()` (live / frozen / delayed / delayed-frozen)
-- [ ] `subscribeMarketData()` — tick price, tick size, tick string, tick generic,
-      option computation (IV, greeks, underlying price); `cancel()`
-- [ ] `snapshot()` — snapshot request, aggregates ticks until `TickSnapshotEnd`
-- [ ] Market data errors (no subscription → 354/10167 etc.) mapped to typed errors
-- [ ] Example `examples/quote.zig` for a stock and an option
+### M4 — Prices (snapshots only)
+Owner's decisions: only snapshots, **never streaming subscriptions**; only
+`live` and `frozen` market data (no delayed data).
+- [x] `Options.market_data_type` (`.live` / `.frozen`, default `.frozen`), sent after connecting
+- [x] `snapshot()` — snapshot request, ticks aggregated into `market_data.Quote` until
+      `TickSnapshotEnd`: bid/ask/last + sizes, last time, open/high/low/close, volume,
+      option model computations (bid/ask/last/model: IV, greeks, PV dividend, underlying price)
+- [x] TWS "not computed" sentinels (-1/-2) mapped to null
+- [x] Errors: 354 → `error.RequestRejected`; 10090/10167 are warnings; cancel on timeout;
+      `Options.snapshot_timeout` (15 s, TWS needs up to ~11 s)
+- [x] Example `examples/quote.zig`, guide `docs/{en,cs}/prices.md`
 
 ### M5 — Open orders (read-only)
 - [ ] `openOrders()` — ReqOpenOrders / ReqAllOpenOrders, collect `OpenOrder`

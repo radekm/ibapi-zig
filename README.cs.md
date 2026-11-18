@@ -69,8 +69,9 @@ pub fn main(init: std.process.Init) !void {
 }
 ```
 
-Každá operace má timeout: `connect_timeout`, `request_timeout` a
-`write_timeout` v `ibapi.Client.Options` (výchozí 10 s, 10 s a 5 s) a
+Každá operace má timeout: `connect_timeout`, `request_timeout`,
+`snapshot_timeout` a `write_timeout` v `ibapi.Client.Options`
+(výchozí 10 s, 10 s, 15 s a 5 s) a
 `nextNotice` ho dostává explicitně. Vypršení se hlásí jako `error.Timeout`.
 
 Požadavky mohou na jednom spojení běžet souběžně, např.
@@ -81,6 +82,7 @@ přes `client.nextNotice(timeout)`.
 ## Návody
 
 - [Vyhledávání kontraktů a opčních řetězců](docs/cs/contracts.md)
+- [Ceny akcií a opcí](docs/cs/prices.md)
 - [Síťový protokol](docs/cs/protocol.md)
 
 ## Příklady
@@ -91,6 +93,7 @@ export IBAPI_HOST=127.0.0.1 IBAPI_PORT=7497 IBAPI_CLIENT_ID=1   # výchozí hodn
 ./zig-out/bin/connect
 ./zig-out/bin/contracts details AAPL
 ./zig-out/bin/option_chain AAPL 45
+./zig-out/bin/quote AAPL 20261218 190 C
 ```
 
 ## Licence

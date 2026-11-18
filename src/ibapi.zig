@@ -21,6 +21,9 @@ pub const Client = @import("Client.zig");
 /// Describing contracts (instruments) for requests.
 pub const contract = @import("contract.zig");
 
+/// Market data snapshots (`Client.snapshot`).
+pub const market_data = @import("market_data.zig");
+
 /// A decoded message received from the server.
 pub const Incoming = @import("incoming.zig").Incoming;
 
