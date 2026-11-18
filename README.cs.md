@@ -51,6 +51,29 @@ const ibapi_dep = b.dependency("ibapi_zig", .{
 exe.root_module.addImport("ibapi", ibapi_dep.module("ibapi"));
 ```
 
+## Použití
+
+```zig
+const std = @import("std");
+const ibapi = @import("ibapi");
+
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+
+    const client = try ibapi.Client.connect(io, gpa, .{ .port = 7497, .client_id = 1 });
+    defer client.close();
+
+    std.log.info("server version {d}, accounts {s}", .{ client.serverVersion(), client.managedAccounts() });
+    std.log.info("server time {d}", .{try client.currentTime()});
+}
+```
+
+Požadavky mohou na jednom spojení běžet souběžně, např.
+`var f = io.async(ibapi.Client.currentTime, .{client});` a později `try f.await(io)`.
+Zprávy, které nepatří k žádnému požadavku (informativní chyby apod.), se čtou
+přes `client.nextNotice()`. Viz [popis protokolu](docs/cs/protocol.md).
+
 ## Licence
 
 ibapi-zig je pod [licencí zlib](LICENSE).

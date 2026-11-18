@@ -20,7 +20,7 @@ jobs:
           echo "$PWD/zig-x86_64-linux-0.17.1" >> "$GITHUB_PATH"
 
       - name: Check formatting
-        run: zig fmt --check build.zig build.zig.zon src
+        run: zig fmt --check build.zig build.zig.zon src examples
 
       - name: Check that the build script compiles
         run: zig build --help > /dev/null

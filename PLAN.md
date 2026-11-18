@@ -38,10 +38,10 @@ ibapi.wire: length-prefixed frames, msg id + protobuf body ◄─┘
 ibapi.proto: types generated from proto/*.proto
 ```
 
-### Wire protocol (to be verified, see Open questions)
+### Wire protocol (details in `docs/en/protocol.md`)
 
 1. Client sends `API\0`, then a length-prefixed version range string
-   `v213..<max>`.
+   `v100..226`.
 2. Server replies with its server version and connection time;
    reject if `< 213`.
 3. Client sends StartApi (client id, optional capabilities).
@@ -88,13 +88,15 @@ and awaited later, so several requests run concurrently on one connection.
       (tests cannot run in CI because the `.proto` files are not public)
 
 ### M1 — Transport and connection
-- [ ] `wire`: frame reader/writer over `std.Io.Reader` / `std.Io.Writer` (+ unit tests)
-- [ ] Handshake, server version check, StartApi
-- [ ] Reader task, request id allocator, routing table, notice queue
-- [ ] Handling of `ErrorMessage` (request-scoped vs. global, warning codes 2104/2106/2158 …)
-- [ ] `nextValidId`, `managedAccounts`, `currentTime` (smoke test)
-- [ ] Fake TWS server for tests (replays recorded frames over a loopback socket)
-- [ ] Clean shutdown: cancel the reader task, close socket, fail pending requests
+- [x] `wire`: frame reader/writer over `std.Io.Reader` / `std.Io.Writer` (+ unit tests)
+- [x] Handshake, server version check, StartApi
+- [x] Reader task, request id allocator, routing table, notice queue
+- [x] `ErrorMessage` routed to the request by `id`, otherwise to notices
+- [ ] Typed classification of error codes (informational 2104/2106/2158 … vs. failures);
+      done per request type in M2–M4 when we know which codes matter
+- [x] `nextValidId`, `managedAccounts` (from the handshake), `currentTime()`
+- [x] Fake TWS server for tests (scripted, over a loopback socket)
+- [x] Clean shutdown: cancel the reader task, close socket, fail pending requests
 
 ### M2 — Contract details
 - [ ] `contractDetails()` — request, collect `ContractData` until `ContractDataEnd`
@@ -132,13 +134,15 @@ and awaited later, so several requests run concurrently on one connection.
 - Account: positions, account summary, PnL, executions
 - Orders: place, modify, cancel (requires explicit go-ahead; paper first)
 
+## Resolved questions
+- Handshake and framing were verified against the reference C++ client of
+  TWS API 10.52.01 (used only as a reference, nothing copied); see
+  `docs/en/protocol.md`. The server hello is still text, StartApi is
+  protobuf from server version 213, and with 213+ every request needed
+  for M1–M5 is protobuf.
+
 ## Open questions
-- The protobuf archive contains only `.proto` files, without message ids and
-  without the reference clients. Message ids and the handshake details
-  (is the server's version reply still text? is StartApi sent as protobuf?)
-  must be verified from IB documentation, the full TWS API download, or a
-  capture from a paper TWS before M1 is finished.
-- Which requests still exist only in the text protocol in 10.52.01 —
-  every `*Request.proto` we need for M2–M5 is present
-  (`ContractDataRequest`, `MarketDataRequest`, `OpenOrdersRequest`, …),
-  to be confirmed.
+- Behaviour against a real TWS / IB Gateway still has to be checked with a
+  paper account (integration tests, M6).
+- `connect` has no timeout yet; a caller can cancel it via `io.async` +
+  `Future.cancel`. Decide whether a built-in timeout option is wanted.

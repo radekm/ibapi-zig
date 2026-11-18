@@ -52,6 +52,29 @@ const ibapi_dep = b.dependency("ibapi_zig", .{
 exe.root_module.addImport("ibapi", ibapi_dep.module("ibapi"));
 ```
 
+## Usage
+
+```zig
+const std = @import("std");
+const ibapi = @import("ibapi");
+
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+
+    const client = try ibapi.Client.connect(io, gpa, .{ .port = 7497, .client_id = 1 });
+    defer client.close();
+
+    std.log.info("server version {d}, accounts {s}", .{ client.serverVersion(), client.managedAccounts() });
+    std.log.info("server time {d}", .{try client.currentTime()});
+}
+```
+
+Requests can run concurrently on one connection, e.g.
+`var f = io.async(ibapi.Client.currentTime, .{client});` and later `try f.await(io)`.
+Messages that belong to no request (informational errors etc.) are read with
+`client.nextNotice()`. See [the protocol description](docs/en/protocol.md).
+
 ## License
 
 ibapi-zig is licensed under the [zlib license](LICENSE).

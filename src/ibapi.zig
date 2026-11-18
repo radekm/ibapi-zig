@@ -12,6 +12,19 @@ pub const proto = @import("ibapi_proto");
 /// Runtime of zig-protobuf, re-exported so that applications use the same version.
 pub const protobuf = @import("protobuf");
 
+/// Framing and handshake of the TWS API.
+pub const wire = @import("wire.zig");
+
+/// Asynchronous client of TWS / IB Gateway.
+pub const Client = @import("Client.zig");
+
+/// A decoded message received from the server.
+pub const Incoming = @import("incoming.zig").Incoming;
+
+test {
+    std.testing.refAllDecls(@This());
+}
+
 test "generated StartApiRequest round-trips through protobuf encoding" {
     const gpa = std.testing.allocator;
 

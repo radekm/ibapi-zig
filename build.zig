@@ -58,6 +58,24 @@ pub fn build(b: *std.Build) !void {
 
     const unit_tests = b.addTest(.{ .root_module = ibapi_mod });
     test_step.dependOn(&b.addRunArtifact(unit_tests).step);
+
+    // Examples are built by `zig build examples` and also by `zig build test`,
+    // so that they never go stale.
+    const examples_step = b.step("examples", "Build the examples");
+    for ([_][]const u8{"connect"}) |name| {
+        const exe = b.addExecutable(.{
+            .name = name,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(b.fmt("examples/{s}.zig", .{name})),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{.{ .name = "ibapi", .module = ibapi_mod }},
+            }),
+        });
+        const install = b.addInstallArtifact(exe, .{});
+        examples_step.dependOn(&install.step);
+        test_step.dependOn(&exe.step);
+    }
 }
 
 const ProtoOptions = struct {
