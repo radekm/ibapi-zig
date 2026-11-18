@@ -36,6 +36,7 @@ pub const InMsg = enum(u32) {
     next_valid_id = 9,
     contract_data = 10,
     managed_accounts = 15,
+    bond_contract_data = 18,
     tick_option_computation = 21,
     tick_generic = 45,
     tick_string = 46,

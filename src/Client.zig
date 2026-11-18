@@ -27,6 +27,7 @@ const wire = @import("wire.zig");
 const Incoming = @import("incoming.zig").Incoming;
 const Mailbox = @import("mailbox.zig").Mailbox;
 const Transport = @import("Transport.zig");
+const contract = @import("contract.zig");
 
 const log = std.log.scoped(.ibapi);
 
@@ -335,8 +336,174 @@ pub fn currentTime(c: *Client) (Error || error{UnexpectedResponse})!i64 {
     return msg.current_time.currentTime orelse error.UnexpectedResponse;
 }
 
+/// Details of an error that TWS reported for a request.
+pub const Diagnostics = struct {
+    /// TWS error code, e.g. 200 for "No security definition has been found".
+    code: i32 = 0,
+    message_buf: [512]u8 = undefined,
+    message_len: usize = 0,
+
+    /// The error message sent by TWS (possibly truncated).
+    pub fn message(d: *const Diagnostics) []const u8 {
+        return d.message_buf[0..d.message_len];
+    }
+
+    fn set(d: *Diagnostics, e: proto.ErrorMessage) void {
+        const text = e.errorMsg orelse "";
+        d.code = e.errorCode orelse 0;
+        d.message_len = @min(text.len, d.message_buf.len);
+        @memcpy(d.message_buf[0..d.message_len], text[0..d.message_len]);
+    }
+};
+
+/// Options of a single request.
+pub const RequestOptions = struct {
+    /// Limit for the whole request; null means `Options.request_timeout`.
+    timeout: ?Io.Duration = null,
+    /// Receives the TWS error when the request fails with `error.RequestRejected`.
+    diagnostics: ?*Diagnostics = null,
+};
+
+/// Errors of requests answered by TWS.
+pub const RequestError = Error || error{
+    /// TWS refused the request; details are in `RequestOptions.diagnostics`.
+    RequestRejected,
+    /// TWS answered with a message the request does not expect.
+    UnexpectedResponse,
+};
+
+/// Whether a TWS error code is only a warning that does not end a request
+/// (codes 2100–2199, e.g. 2104 "market data farm connection is OK").
+pub fn isWarningCode(code: i32) bool {
+    return code >= 2100 and code < 2200;
+}
+
+/// Contract details returned by `contractDetails`.
+pub const ContractDetailsList = struct {
+    gpa: Allocator,
+    /// One entry per matching contract: `contract` and `contractDetails`.
+    items: []proto.ContractData,
+
+    /// Frees the list and all entries.
+    pub fn deinit(l: *ContractDetailsList) void {
+        for (l.items) |*item| item.deinit(l.gpa);
+        l.gpa.free(l.items);
+        l.* = undefined;
+    }
+};
+
+/// Looks up all contracts matching `query`, e.g. every exchange listing of a
+/// stock or every option of an expiration. The result is allocated with `gpa`
+/// and freed with `deinit`. Fails with `error.RequestRejected` when nothing
+/// matches (TWS error 200).
+///
+/// Queries that match thousands of contracts (all options of a symbol) can
+/// take long; raise `opts.timeout` for them.
+pub fn contractDetails(c: *Client, gpa: Allocator, query: contract.Query, opts: RequestOptions) RequestError!ContractDetailsList {
+    const req_id = c.nextRequestId();
+    var buffer: [64]Incoming = undefined;
+    var r: Responses = undefined;
+    try c.register(&r, .{ .req_id = req_id }, .contract_data_end, &buffer, c.timeoutFor(opts));
+    defer r.deinit();
+
+    try c.send(.req_contract_data, proto.ContractDataRequest{ .reqId = req_id, .contract = query.toProto() });
+    const items = collectContractDetails(c, gpa, &r, opts.diagnostics) catch |err| {
+        if (err == error.Timeout or err == error.Canceled) c.cancelContractData(req_id);
+        return err;
+    };
+    return .{ .gpa = gpa, .items = items };
+}
+
+fn collectContractDetails(c: *Client, gpa: Allocator, r: *Responses, diagnostics: ?*Diagnostics) RequestError![]proto.ContractData {
+    var items: std.ArrayList(proto.ContractData) = .empty;
+    errdefer {
+        for (items.items) |*item| item.deinit(gpa);
+        items.deinit(gpa);
+    }
+    while (try c.nextResponse(r, diagnostics)) |msg| {
+        var m = msg;
+        defer m.deinit(c.gpa);
+        switch (m) {
+            .contract_data, .bond_contract_data => |data| {
+                try items.ensureUnusedCapacity(gpa, 1);
+                items.appendAssumeCapacity(try data.dupe(gpa));
+            },
+            .contract_data_end => {},
+            else => return error.UnexpectedResponse,
+        }
+    }
+    return items.toOwnedSlice(gpa);
+}
+
+/// Symbols found by `searchSymbols`.
+pub const SymbolMatches = struct {
+    gpa: Allocator,
+    samples: proto.SymbolSamples,
+
+    /// Matching contracts with the derivative types available for each.
+    pub fn items(m: *const SymbolMatches) []const proto.ContractDescription {
+        return m.samples.contractDescriptions.items;
+    }
+
+    /// Frees the matches.
+    pub fn deinit(m: *SymbolMatches) void {
+        m.samples.deinit(m.gpa);
+        m.* = undefined;
+    }
+};
+
+/// Searches symbols starting with `pattern`, or company names containing it.
+/// TWS returns at most a few dozen matches. Free the result with `deinit`.
+pub fn searchSymbols(c: *Client, gpa: Allocator, pattern: []const u8, opts: RequestOptions) RequestError!SymbolMatches {
+    const req_id = c.nextRequestId();
+    var buffer: [1]Incoming = undefined;
+    var r: Responses = undefined;
+    try c.register(&r, .{ .req_id = req_id }, .symbol_samples, &buffer, c.timeoutFor(opts));
+    defer r.deinit();
+
+    try c.send(.req_matching_symbols, proto.MatchingSymbolsRequest{ .reqId = req_id, .pattern = pattern });
+
+    var msg = (try c.nextResponse(&r, opts.diagnostics)) orelse return error.UnexpectedResponse;
+    defer msg.deinit(c.gpa);
+    if (msg != .symbol_samples) return error.UnexpectedResponse;
+    return .{ .gpa = gpa, .samples = try msg.symbol_samples.dupe(gpa) };
+}
+
 // ---------------------------------------------------------------------------
 // Internals
+
+fn timeoutFor(c: *const Client, opts: RequestOptions) Io.Timeout {
+    return .{ .duration = .{ .raw = opts.timeout orelse c.request_timeout, .clock = .awake } };
+}
+
+/// Returns the next response of a request. TWS errors for the request end it
+/// with `error.RequestRejected`, except warnings, which are only logged.
+fn nextResponse(c: *Client, r: *Responses, diagnostics: ?*Diagnostics) RequestError!?Incoming {
+    while (try r.next()) |msg| {
+        if (msg != .error_message) return msg;
+        var m = msg;
+        defer m.deinit(c.gpa);
+        const e = m.error_message;
+        const code = e.errorCode orelse 0;
+        if (isWarningCode(code)) {
+            log.info("request {?d}: TWS warning {d}: {s}", .{ e.id, code, e.errorMsg orelse "" });
+            continue;
+        }
+        log.debug("request {?d} rejected by TWS: {d} {s}", .{ e.id, code, e.errorMsg orelse "" });
+        if (diagnostics) |d| d.set(e);
+        return error.RequestRejected;
+    }
+    return null;
+}
+
+/// Asks TWS to stop sending contract details for an abandoned request.
+/// Best effort: older servers cannot cancel and the response is then dropped.
+fn cancelContractData(c: *Client, req_id: i32) void {
+    if (c.server_version < 215) return;
+    c.send(.cancel_contract_data, proto.CancelContractData{ .reqId = req_id }) catch |err| {
+        log.debug("cannot cancel contract data request {d}: {t}", .{ req_id, err });
+    };
+}
 
 fn connectHost(host: net.HostName, io: Io, port: u16) net.HostName.ConnectError!net.Stream {
     return host.connect(io, port, .{ .mode = .stream });
@@ -824,4 +991,116 @@ test "a TCP connect that hangs is abandoned at the deadline" {
     try testing.expectError(error.Timeout, raceConnect(io, deadline, hangingConnect, .{io}));
     const elapsed = start.durationTo(Io.Clock.Timestamp.now(io, .awake));
     try testing.expect(elapsed.raw.toMilliseconds() < 5000);
+}
+
+fn serveContracts(server: *FakeServer) !void {
+    const gpa = testing.allocator;
+    const conn = try server.accept(testing.io, gpa);
+    defer conn.deinit();
+    try conn.handshake(0);
+
+    // 1. A stock query with two matches and a warning in between.
+    {
+        const req = try conn.readRequest();
+        try testing.expectEqual(wire.OutMsg.req_contract_data, req.id);
+        var q = try req.decode(proto.ContractDataRequest, gpa);
+        defer q.deinit(gpa);
+        const qc = q.contract.?;
+        try testing.expectEqualStrings("AAPL", qc.symbol.?);
+        try testing.expectEqualStrings("STK", qc.secType.?);
+        try testing.expectEqualStrings("SMART", qc.exchange.?);
+        try testing.expectEqualStrings("USD", qc.currency.?);
+        try testing.expectEqual(@as(?i32, null), qc.conId);
+
+        try conn.send(.contract_data, proto.ContractData{
+            .reqId = q.reqId,
+            .contract = .{ .conId = 265598, .symbol = "AAPL", .secType = "STK", .exchange = "SMART", .primaryExch = "NASDAQ", .currency = "USD" },
+            .contractDetails = .{ .longName = "APPLE INC", .minTick = "0.01" },
+        });
+        try conn.send(.error_message, proto.ErrorMessage{ .id = q.reqId, .errorCode = 2158, .errorMsg = "Sec-def data farm connection is OK" });
+        try conn.send(.contract_data, proto.ContractData{
+            .reqId = q.reqId,
+            .contract = .{ .conId = 38708077, .symbol = "AAPL", .secType = "STK", .exchange = "MEXI", .currency = "MXN" },
+            .contractDetails = .{ .longName = "APPLE INC" },
+        });
+        try conn.send(.contract_data_end, proto.ContractDataEnd{ .reqId = q.reqId });
+    }
+    // 2. Nothing found.
+    {
+        const req = try conn.readRequest();
+        var q = try req.decode(proto.ContractDataRequest, gpa);
+        defer q.deinit(gpa);
+        try conn.send(.error_message, proto.ErrorMessage{
+            .id = q.reqId,
+            .errorCode = 200,
+            .errorMsg = "No security definition has been found for the request",
+        });
+    }
+    // 3. No answer: the client times out and cancels the request.
+    {
+        const req = try conn.readRequest();
+        var q = try req.decode(proto.ContractDataRequest, gpa);
+        defer q.deinit(gpa);
+        const cancel = try conn.readRequest();
+        try testing.expectEqual(wire.OutMsg.cancel_contract_data, cancel.id);
+        var cq = try cancel.decode(proto.CancelContractData, gpa);
+        defer cq.deinit(gpa);
+        try testing.expectEqual(q.reqId, cq.reqId);
+    }
+    // 4. Symbol search.
+    {
+        const req = try conn.readRequest();
+        try testing.expectEqual(wire.OutMsg.req_matching_symbols, req.id);
+        var q = try req.decode(proto.MatchingSymbolsRequest, gpa);
+        defer q.deinit(gpa);
+        try testing.expectEqualStrings("APP", q.pattern.?);
+
+        var samples: proto.SymbolSamples = .{ .reqId = q.reqId };
+        defer samples.contractDescriptions.deinit(gpa);
+        try samples.contractDescriptions.append(gpa, .{
+            .contract = .{ .conId = 265598, .symbol = "AAPL", .secType = "STK", .primaryExch = "NASDAQ", .currency = "USD" },
+        });
+        try samples.contractDescriptions.append(gpa, .{
+            .contract = .{ .conId = 543210, .symbol = "APP", .secType = "STK", .primaryExch = "NASDAQ", .currency = "USD" },
+        });
+        try conn.send(.symbol_samples, samples);
+    }
+    try conn.expectClose();
+}
+
+test "contract details, rejections, timeouts and symbol search" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    var server = try FakeServer.listen(io);
+    defer server.deinit(io);
+    var script = try io.concurrent(serveContracts, .{&server});
+    defer script.cancel(io) catch {};
+
+    const c = try Client.connect(io, gpa, .{ .port = server.port });
+    {
+        defer c.close();
+
+        var list = try c.contractDetails(gpa, contract.Query.stock("AAPL", "USD"), .{});
+        defer list.deinit();
+        try testing.expectEqual(@as(usize, 2), list.items.len);
+        try testing.expectEqual(@as(?i32, 265598), list.items[0].contract.?.conId);
+        try testing.expectEqualStrings("NASDAQ", list.items[0].contract.?.primaryExch.?);
+        try testing.expectEqualStrings("APPLE INC", list.items[0].contractDetails.?.longName.?);
+        try testing.expectEqualStrings("MXN", list.items[1].contract.?.currency.?);
+
+        var diag: Diagnostics = .{};
+        try testing.expectError(error.RequestRejected, c.contractDetails(gpa, contract.Query.stock("NOPE", "USD"), .{ .diagnostics = &diag }));
+        try testing.expectEqual(@as(i32, 200), diag.code);
+        try testing.expectEqualStrings("No security definition has been found for the request", diag.message());
+
+        try testing.expectError(error.Timeout, c.contractDetails(gpa, contract.Query.option("AAPL", "USD", null, null, null), .{
+            .timeout = millis(100),
+        }));
+
+        var matches = try c.searchSymbols(gpa, "APP", .{});
+        defer matches.deinit();
+        try testing.expectEqual(@as(usize, 2), matches.items().len);
+        try testing.expectEqualStrings("APP", matches.items()[1].contract.?.symbol.?);
+    }
+    try script.await(io);
 }

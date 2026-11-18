@@ -76,7 +76,21 @@ and `nextNotice` takes one explicitly. Timeouts are reported as `error.Timeout`.
 Requests can run concurrently on one connection, e.g.
 `var f = io.async(ibapi.Client.currentTime, .{client});` and later `try f.await(io)`.
 Messages that belong to no request (informational errors etc.) are read with
-`client.nextNotice()`. See [the protocol description](docs/en/protocol.md).
+`client.nextNotice(timeout)`.
+
+## Guides
+
+- [Looking up contracts](docs/en/contracts.md)
+- [Wire protocol](docs/en/protocol.md)
+
+## Examples
+
+```sh
+zig build examples
+export IBAPI_HOST=127.0.0.1 IBAPI_PORT=7497 IBAPI_CLIENT_ID=1   # defaults
+./zig-out/bin/connect
+./zig-out/bin/contracts details AAPL
+```
 
 ## License
 

@@ -15,6 +15,11 @@ pub const Incoming = union(enum) {
     managed_accounts: proto.ManagedAccounts,
     current_time: proto.CurrentTime,
     current_time_in_millis: proto.CurrentTimeInMillis,
+    contract_data: proto.ContractData,
+    /// Same payload as `contract_data`, sent for bonds.
+    bond_contract_data: proto.ContractData,
+    contract_data_end: proto.ContractDataEnd,
+    symbol_samples: proto.SymbolSamples,
     /// A message this version of the library does not decode.
     other: Other,
 

@@ -1,23 +1,16 @@
 //! Connects to TWS / IB Gateway, prints connection details and the server
 //! time, then prints notices until none arrives for 3 seconds.
 //!
-//! Usage: connect [host] [port] [client-id]
-//!        (defaults: 127.0.0.1, 7497 = paper TWS, client id 1)
+//! Connection: IBAPI_HOST, IBAPI_PORT, IBAPI_CLIENT_ID (see common.zig).
 
 const std = @import("std");
 const ibapi = @import("ibapi");
+const common = @import("common.zig");
 
 pub fn main(init: std.process.Init) !void {
-    const io = init.io;
     const gpa = init.gpa;
 
-    var args = init.minimal.args.iterate();
-    _ = args.skip();
-    const host = args.next() orelse "127.0.0.1";
-    const port = if (args.next()) |a| try std.fmt.parseInt(u16, a, 10) else 7497;
-    const client_id = if (args.next()) |a| try std.fmt.parseInt(i32, a, 10) else 1;
-
-    const client = try ibapi.Client.connect(io, gpa, .{ .host = host, .port = port, .client_id = client_id });
+    const client = try common.connectFromEnv(init);
     defer client.close();
 
     std.log.info("server version {d}, connected at {s}", .{ client.serverVersion(), client.connectionTime() });

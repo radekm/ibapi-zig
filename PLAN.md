@@ -56,7 +56,7 @@ var client = try ibapi.Client.connect(io, gpa, .{ .host = "127.0.0.1", .port = 7
 defer client.close();
 
 // Contracts for a symbol (all results collected until ContractDataEnd).
-const details = try client.contractDetails(gpa, .{ .symbol = "AAPL", .sec_type = .stk, .currency = "USD" });
+var details = try client.contractDetails(gpa, ibapi.contract.Query.stock("AAPL", "USD"), .{});
 defer details.deinit();
 
 // Option chain parameters (expirations, strikes, exchanges).
@@ -101,10 +101,13 @@ and awaited later, so several requests run concurrently on one connection.
       connection), explicit timeout for `nextNotice`
 
 ### M2 — Contract details
-- [ ] `contractDetails()` — request, collect `ContractData` until `ContractDataEnd`
-- [ ] Ergonomic contract builders: stock, option, future, index, forex
-- [ ] `matchingSymbols()` (symbol search) — optional, if cheap
-- [ ] Example `examples/contracts.zig`
+- [x] `contractDetails()` — request, collect `ContractData` (+ bond variant) until
+      `ContractDataEnd`; TWS errors → `error.RequestRejected` + `Diagnostics`;
+      cancel on timeout (server ≥ 215)
+- [x] Ergonomic contract builders: `contract.Query` with stock, option, future, index, forex, byConId
+- [x] `searchSymbols()` (MatchingSymbols)
+- [x] Per-request options: `timeout`, `diagnostics`
+- [x] Example `examples/contracts.zig`, guide `docs/{en,cs}/contracts.md`
 
 ### M3 — Option chains
 - [ ] `optionChainParams()` (SecDefOptParams: exchanges, expirations, strikes, multiplier)
@@ -149,5 +152,5 @@ and awaited later, so several requests run concurrently on one connection.
 - `std.Io.Threaded` in Zig 0.17.1 does not implement TCP connect timeouts
   (it panics), so `connect` races the connection attempt against a timer.
   Replace with `ConnectOptions.timeout` once Zig implements it.
-- Per-call timeout overrides for high-level requests (currently the client-wide
-  `request_timeout`) — add when a request type needs a different limit.
+- Warning codes: only 2100–2199 are treated as non-terminal for requests so far;
+  extend in M4 (e.g. 10167 delayed market data) when market data needs it.

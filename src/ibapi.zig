@@ -18,6 +18,9 @@ pub const wire = @import("wire.zig");
 /// Asynchronous client of TWS / IB Gateway.
 pub const Client = @import("Client.zig");
 
+/// Describing contracts (instruments) for requests.
+pub const contract = @import("contract.zig");
+
 /// A decoded message received from the server.
 pub const Incoming = @import("incoming.zig").Incoming;
 

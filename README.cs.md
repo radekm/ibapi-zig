@@ -76,7 +76,21 @@ Každá operace má timeout: `connect_timeout`, `request_timeout` a
 Požadavky mohou na jednom spojení běžet souběžně, např.
 `var f = io.async(ibapi.Client.currentTime, .{client});` a později `try f.await(io)`.
 Zprávy, které nepatří k žádnému požadavku (informativní chyby apod.), se čtou
-přes `client.nextNotice()`. Viz [popis protokolu](docs/cs/protocol.md).
+přes `client.nextNotice(timeout)`.
+
+## Návody
+
+- [Vyhledávání kontraktů](docs/cs/contracts.md)
+- [Síťový protokol](docs/cs/protocol.md)
+
+## Příklady
+
+```sh
+zig build examples
+export IBAPI_HOST=127.0.0.1 IBAPI_PORT=7497 IBAPI_CLIENT_ID=1   # výchozí hodnoty
+./zig-out/bin/connect
+./zig-out/bin/contracts details AAPL
+```
 
 ## Licence
 
