@@ -4,7 +4,7 @@
 //!   orders              open orders of all clients and of TWS
 //!   orders completed    orders completed today
 //!
-//! Connection: IBAPI_HOST, IBAPI_PORT, IBAPI_CLIENT_ID (see common.zig).
+//! Connection: Config.zon in the current directory (see common.zig).
 
 const std = @import("std");
 const ibapi = @import("ibapi");
@@ -19,7 +19,7 @@ pub fn main(init: std.process.Init) !void {
     _ = args.skip();
     const mode = args.next() orelse "all";
 
-    const client = try common.connectFromEnv(init);
+    const client = try common.connectFromConfig(init);
     defer client.close();
 
     var list = if (std.mem.eql(u8, mode, "all"))

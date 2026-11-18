@@ -4,7 +4,7 @@
 //!   quote SYMBOL                         stock (SMART, USD)
 //!   quote SYMBOL EXPIRY STRIKE C|P       option, EXPIRY as YYYYMMDD
 //!
-//! Connection: IBAPI_HOST, IBAPI_PORT, IBAPI_CLIENT_ID (see common.zig).
+//! Connection: Config.zon in the current directory (see common.zig).
 
 const std = @import("std");
 const ibapi = @import("ibapi");
@@ -23,7 +23,7 @@ pub fn main(init: std.process.Init) !void {
         break :blk Query.option(symbol, "USD", expiry, strike, right);
     } else Query.stock(symbol, "USD");
 
-    const client = try common.connectFromEnv(init);
+    const client = try common.connectFromConfig(init);
     defer client.close();
 
     var diag: ibapi.Client.Diagnostics = .{};

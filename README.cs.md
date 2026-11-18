@@ -119,9 +119,12 @@ přes `client.nextNotice(timeout)`.
 
 ## Příklady
 
+Příklady čtou nastavení spojení ze souboru `Config.zon` v aktuálním
+pracovním adresáři (git ho ignoruje):
+
 ```sh
 zig build examples
-export IBAPI_HOST=127.0.0.1 IBAPI_PORT=7497 IBAPI_CLIENT_ID=1   # výchozí hodnoty
+cp examples/Config.example.zon Config.zon   # pak upravte host, port, client_id
 ./zig-out/bin/connect
 ./zig-out/bin/contracts details AAPL
 ./zig-out/bin/option_chain AAPL 45

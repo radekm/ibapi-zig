@@ -1,0 +1,11 @@
+// Connection settings of the example programs. Copy this file to Config.zon
+// in the directory you run the examples from and edit it. Config.zon is
+// ignored by git.
+.{
+    // Host name or IP address of TWS / IB Gateway.
+    .host = "127.0.0.1",
+    // API port: 7497 paper TWS, 7496 live TWS, 4002 paper Gateway, 4001 live Gateway.
+    .port = 7497,
+    // Must be unique among API clients connected at the same time.
+    .client_id = 1,
+}

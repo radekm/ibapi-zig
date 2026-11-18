@@ -1,6 +1,8 @@
 .zig-cache/
 zig-out/
 zig-pkg/
+# Connection settings of the examples (copy examples/Config.example.zon).
+/Config.zon
 # The TWS API .proto files are not committed (only the code generated from them).
 /proto/
 *.proto

@@ -55,6 +55,14 @@ pub fn build(b: *std.Build) !void {
         examples_step.dependOn(&install.step);
         test_step.dependOn(&exe.step);
     }
+    // Tests of the shared example code (e.g. that Config.example.zon parses).
+    const example_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("examples/common.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "ibapi", .module = ibapi_mod }},
+    }) });
+    test_step.dependOn(&b.addRunArtifact(example_tests).step);
 
     // Opt-in test against a paper TWS / IB Gateway. `zig build test` only
     // compiles it.

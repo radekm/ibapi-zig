@@ -119,9 +119,12 @@ Messages that belong to no request (informational errors etc.) are read with
 
 ## Examples
 
+The examples read the connection settings from `Config.zon` in the current
+working directory (the file is ignored by git):
+
 ```sh
 zig build examples
-export IBAPI_HOST=127.0.0.1 IBAPI_PORT=7497 IBAPI_CLIENT_ID=1   # defaults
+cp examples/Config.example.zon Config.zon   # then edit host, port, client_id
 ./zig-out/bin/connect
 ./zig-out/bin/contracts details AAPL
 ./zig-out/bin/option_chain AAPL 45

@@ -3,7 +3,7 @@
 //! (from contract details of its call options).
 //!
 //! Usage: option_chain SYMBOL [MAX_DAYS] [CURRENCY]   (defaults: 45, USD)
-//! Connection: IBAPI_HOST, IBAPI_PORT, IBAPI_CLIENT_ID (see common.zig).
+//! Connection: Config.zon in the current directory (see common.zig).
 
 const std = @import("std");
 const ibapi = @import("ibapi");
@@ -24,7 +24,7 @@ pub fn main(init: std.process.Init) !void {
     const max_days = if (args.next()) |a| try std.fmt.parseInt(i64, a, 10) else 45;
     const currency = args.next() orelse "USD";
 
-    const client = try common.connectFromEnv(init);
+    const client = try common.connectFromConfig(init);
     defer client.close();
 
     // 1. The underlying's contract id.

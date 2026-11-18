@@ -6,7 +6,7 @@
 //!
 //! SECTYPE is a TWS code (STK, OPT, FUT, IND, CASH, …; default STK),
 //! CURRENCY defaults to USD. EXPIRY is YYYYMM or YYYYMMDD for derivatives.
-//! Connection: IBAPI_HOST, IBAPI_PORT, IBAPI_CLIENT_ID (see common.zig).
+//! Connection: Config.zon in the current directory (see common.zig).
 //!
 //! Examples:
 //!   contracts search apple
@@ -26,7 +26,7 @@ pub fn main(init: std.process.Init) !void {
     _ = args.skip();
     const command = args.next() orelse return usage();
 
-    const client = try common.connectFromEnv(init);
+    const client = try common.connectFromConfig(init);
     defer client.close();
 
     var diag: ibapi.Client.Diagnostics = .{};
