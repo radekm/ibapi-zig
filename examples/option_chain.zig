@@ -31,7 +31,8 @@ pub fn main(init: std.process.Init) !void {
     var stocks = try client.contractDetails(gpa, Query.stock(symbol, currency), .{});
     defer stocks.deinit();
     if (stocks.items.len == 0) return error.UnderlyingNotFound;
-    const con_id = stocks.items[0].contract.?.conId.?;
+    const underlying = stocks.items[0].contract orelse return error.UnderlyingNotFound;
+    const con_id = underlying.conId orelse return error.UnderlyingNotFound;
 
     // 2. Expirations of all trading classes (SMART only, other exchanges list the same).
     var chain = try client.optionChainParams(gpa, .{ .symbol = symbol, .con_id = con_id }, .{});
@@ -60,7 +61,10 @@ pub fn main(init: std.process.Init) !void {
     defer calls.deinit();
 
     var strikes: std.ArrayList(f64) = .empty;
-    for (calls.items) |item| try strikes.append(arena, item.contract.?.strike orelse continue);
+    for (calls.items) |item| {
+        const c = item.contract orelse continue;
+        try strikes.append(arena, c.strike orelse continue);
+    }
     std.mem.sort(f64, strikes.items, {}, std.sort.asc(f64));
     try common.print(io, "strikes of {s} ({d} call contracts):\n", .{ expiry, calls.items.len });
     for (strikes.items) |s| try common.print(io, "  {d}\n", .{s});

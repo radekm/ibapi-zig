@@ -129,7 +129,7 @@ pub const Conn = struct {
     pub fn readRequest(conn: *Conn) !Request {
         const msg = try wire.readMessage(&conn.reader.interface, conn.gpa, &conn.frame);
         try std.testing.expect(msg.protobuf);
-        return .{ .id = @fromBackingInt(@intCast(@backingInt(msg.id))), .body = msg.body };
+        return .{ .id = std.enums.fromInt(wire.OutMsg, @backingInt(msg.id)) orelse return error.UnknownRequest, .body = msg.body };
     }
 
     /// Sends a protobuf message as the server would.

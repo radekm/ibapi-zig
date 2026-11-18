@@ -103,7 +103,7 @@ fn contractDetails(r: *Runner) ?i32 {
         r.report("contractDetails AAPL", .failed, "no contracts", .{});
         return null;
     }
-    const id = list.items[0].contract.?.conId;
+    const id = if (list.items[0].contract) |c| c.conId else null;
     r.report("contractDetails AAPL", .ok, "{d} contracts, con id {?d}", .{ list.items.len, id });
 
     var none_diag: Client.Diagnostics = .{};
@@ -147,7 +147,7 @@ fn snapshot(r: *Runner, con_id: i32) void {
         error.RequestRejected => return r.report("snapshot", .skipped, "TWS error {d}: {s}", .{ diag.code, diag.message() }),
         else => return r.report("snapshot", .failed, "{t}", .{err}),
     };
-    r.report("snapshot", .ok, "{?t} bid {?d} ask {?d} last {?d} close {?d}", .{ q.data_type, q.bid, q.ask, q.last, q.close });
+    r.report("snapshot", .ok, "{s} bid {?d} ask {?d} last {?d} close {?d}", .{ if (q.data_type) |t| t.name() else "?", q.bid, q.ask, q.last, q.close });
 }
 
 fn openOrders(r: *Runner) void {

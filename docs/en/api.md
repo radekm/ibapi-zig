@@ -45,7 +45,7 @@ For messages the library does not wrap yet:
 | Method | Purpose |
 | --- | --- |
 | `send(id, msg)` | sends any request listed in `ibapi.wire.OutMsg` |
-| `register(r, key, end, buffer, timeout)` | starts collecting messages by `reqId` (`.req_id`) or by kind (`.kinds`) into `Client.Responses` |
+| `register(r, key, end, buffer, timeout)` | starts collecting messages by `reqId` (`.req_id`) or by kind (`.kinds`) into `Client.Responses`; fails with `error.RequestIdInUse` if a pending request uses the id |
 | `registerKindsAndSend(…)` | `register` by kind + `send` as one step, keeping the order of requests |
 | `nextRequestId()` | a fresh request id |
 
@@ -79,6 +79,11 @@ unread notices are kept; newer ones are dropped and counted by
   messages per second; further messages wait. If the wait would exceed
   `Options.write_timeout`, `send` fails with `error.Timeout` without
   touching the connection.
+- A request must keep reading its responses. When its buffer is full, the
+  reader waits at most until the request's deadline and then drops the
+  request's messages, so one stuck request cannot stop the others for longer.
+  After its deadline `Responses.next` fails with `error.Timeout` even when
+  messages are still queued.
 - The client does not reconnect. When the connection is lost, pending and
   later requests fail with `error.ConnectionClosed` or `error.ConnectionLost`;
   close the client and connect again.

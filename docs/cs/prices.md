@@ -32,7 +32,7 @@ neposlalo):
 | `open`, `high`, `low` | dnešní |
 | `close` | závěr předchozího obchodního dne |
 | `volume` | dnešní objem |
-| `data_type` | `.live` nebo `.frozen`, jak ho nahlásilo TWS |
+| `data_type` | `.live` nebo `.frozen`, jak ho nahlásilo TWS; jiné hodnoty (zpožděná data) nemají tag, vypisujte je přes `name()` |
 | `bid_computation`, `ask_computation`, `last_computation`, `model_computation` | hodnoty pro opce, viz níže |
 
 `quote.mid()` vrací střed mezi bid a ask.

@@ -44,7 +44,7 @@ Pro zprávy, které knihovna zatím neobaluje:
 | Metoda | Účel |
 | --- | --- |
 | `send(id, msg)` | pošle libovolný požadavek uvedený ve `ibapi.wire.OutMsg` |
-| `register(r, key, end, buffer, timeout)` | začne sbírat zprávy podle `reqId` (`.req_id`) nebo podle druhu (`.kinds`) do `Client.Responses` |
+| `register(r, key, end, buffer, timeout)` | začne sbírat zprávy podle `reqId` (`.req_id`) nebo podle druhu (`.kinds`) do `Client.Responses`; skončí s `error.RequestIdInUse`, pokud id používá čekající požadavek |
 | `registerKindsAndSend(…)` | `register` podle druhu + `send` jako jeden krok, zachová pořadí požadavků |
 | `nextRequestId()` | nové id požadavku |
 
@@ -78,6 +78,10 @@ je `droppedNotices()`.
   za sekundu; další zprávy počkají. Kdyby čekání přesáhlo
   `Options.write_timeout`, `send` skončí s `error.Timeout` a spojení se
   nedotkne.
+- Požadavek musí průběžně číst své odpovědi. Když má plný buffer, čtecí
+  úloha čeká nejvýš do jeho deadlinu a pak jeho zprávy zahodí, takže jeden
+  zaseknutý požadavek nezdrží ostatní déle. Po deadlinu `Responses.next`
+  skončí s `error.Timeout`, i když ve frontě ještě zprávy jsou.
 - Klient se znovu nepřipojuje. Při ztrátě spojení skončí čekající i další
   požadavky s `error.ConnectionClosed` nebo `error.ConnectionLost`; klienta
   zavřete a připojte se znovu.

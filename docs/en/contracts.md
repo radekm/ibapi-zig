@@ -26,8 +26,8 @@ Any other field can be set directly, e.g.
 var list = try client.contractDetails(gpa, Query.stock("AAPL", "USD"), .{});
 defer list.deinit();
 for (list.items) |item| {
-    const c = item.contract.?;          // ibapi.proto.Contract
-    const d = item.contractDetails.?;   // ibapi.proto.ContractDetails
+    const c = item.contract orelse continue;          // ibapi.proto.Contract
+    const d = item.contractDetails orelse continue;   // ibapi.proto.ContractDetails
     std.debug.print("{?d} {s} {s}\n", .{ c.conId, c.primaryExch orelse "", d.longName orelse "" });
 }
 ```
@@ -89,7 +89,7 @@ expiration, ask for its contracts; calls are enough for stock options:
 var calls = try client.contractDetails(gpa,
     Query.option("AAPL", "USD", "20261218", null, .call), .{ .timeout = .fromSeconds(30) });
 defer calls.deinit();
-// calls.items[i].contract.?.strike, .conId
+// calls.items[i].contract (optional) → .strike, .conId
 ```
 
 TWS cannot filter by a range of dates. To work with, say, expirations within

@@ -79,7 +79,9 @@ pub fn main(init: std.process.Init) !void {
 
     var details = try client.contractDetails(gpa, ibapi.contract.Query.stock("AAPL", "USD"), .{});
     defer details.deinit();
-    const con_id = details.items[0].contract.?.conId.?;
+    if (details.items.len == 0) return error.NotFound;
+    const aapl = details.items[0].contract orelse return error.NotFound;
+    const con_id = aapl.conId orelse return error.NotFound;
 
     const quote = try client.snapshot(ibapi.contract.Query.byConId(con_id, "SMART"), .{});
     std.log.info("AAPL bid {?d} ask {?d}", .{ quote.bid, quote.ask });

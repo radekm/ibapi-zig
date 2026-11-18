@@ -32,7 +32,7 @@ send it):
 | `open`, `high`, `low` | today |
 | `close` | close of the previous trading day |
 | `volume` | today's volume |
-| `data_type` | `.live` or `.frozen`, as reported by TWS |
+| `data_type` | `.live` or `.frozen` as reported by TWS; other values (delayed) have no tag, print them with `name()` |
 | `bid_computation`, `ask_computation`, `last_computation`, `model_computation` | option values, see below |
 
 `quote.mid()` returns the midpoint of bid and ask.

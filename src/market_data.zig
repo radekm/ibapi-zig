@@ -11,8 +11,21 @@ pub const MarketDataType = enum(i32) {
     /// Real-time data while the market is open, otherwise the last values
     /// recorded at the close. Needs the same subscription as `live`.
     frozen = 2,
-    /// Types the library never requests but TWS may report (delayed data).
+    /// Types the library never requests but TWS may report (3 delayed,
+    /// 4 delayed frozen). Such values have no name: print them with `name`,
+    /// not `@tagName` or `{t}`, which are illegal on unnamed values.
     _,
+
+    /// "live", "frozen", "delayed", "delayed_frozen" or "unknown".
+    pub fn name(t: MarketDataType) []const u8 {
+        return switch (@backingInt(t)) {
+            1 => "live",
+            2 => "frozen",
+            3 => "delayed",
+            4 => "delayed_frozen",
+            else => "unknown",
+        };
+    }
 };
 
 /// Values computed by the TWS option model for one source price.
@@ -173,6 +186,12 @@ fn parseSize(s: ?[]const u8) ?f64 {
 }
 
 const testing = std.testing;
+
+test "market data types have names, also those without a tag" {
+    try testing.expectEqualStrings("frozen", MarketDataType.frozen.name());
+    try testing.expectEqualStrings("delayed", @as(MarketDataType, @fromBackingInt(3)).name());
+    try testing.expectEqualStrings("unknown", @as(MarketDataType, @fromBackingInt(77)).name());
+}
 
 test "price ticks fill the quote, -1 means no price" {
     var q: Quote = .{};

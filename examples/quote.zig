@@ -32,7 +32,7 @@ pub fn main(init: std.process.Init) !void {
         else => |e| return e,
     };
 
-    try common.print(io, "data:   {s}\n", .{if (q.data_type) |t| @tagName(t) else "?"});
+    try common.print(io, "data:   {s}\n", .{if (q.data_type) |t| t.name() else "?"});
     try common.print(io, "bid:    {?d} x {?d}\n", .{ q.bid, q.bid_size });
     try common.print(io, "ask:    {?d} x {?d}\n", .{ q.ask, q.ask_size });
     try common.print(io, "last:   {?d} x {?d} at {?d}\n", .{ q.last, q.last_size, q.last_timestamp });

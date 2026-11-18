@@ -37,6 +37,11 @@ const log = std.log.scoped(.ibapi);
 /// How many unrouted messages are kept for `nextNotice` before new ones are dropped.
 pub const notice_capacity = 256;
 
+/// Messages buffered per request between the reader and the requesting task.
+/// The buffers live on the requesting task's stack (an `Incoming` takes
+/// about 2.6 KB), and requests read continuously, so a few suffice.
+const response_buffer_len = 16;
+
 io: Io,
 gpa: Allocator,
 transport: Transport,
@@ -90,6 +95,8 @@ pub const Error = error{
     Timeout,
     /// `io` cannot run operations concurrently or with a timeout.
     ConcurrencyUnavailable,
+    /// `register` was given a request id that a pending request already uses.
+    RequestIdInUse,
 } || Allocator.Error || Io.Cancelable;
 
 /// Errors of `connect`.
@@ -158,11 +165,13 @@ pub const Responses = struct {
 
     /// Returns the next message, or null after the message that completes the
     /// request has been returned. Fails with `error.Timeout` when the
-    /// deadline given to `Client.register` has passed. The caller owns the
-    /// message and must call `Incoming.deinit` on it.
+    /// deadline given to `Client.register` has passed, even if more messages
+    /// are queued (unless the request has already been completed), so a
+    /// server that never stops sending cannot hold a request forever. The
+    /// caller owns the message and must call `Incoming.deinit` on it.
     pub fn next(r: *Responses) Error!?Incoming {
         const c = r.client;
-        return r.box.get(c.io, r.deadline) catch |err| switch (err) {
+        return r.box.getBefore(c.io, r.deadline) catch |err| switch (err) {
             error.Canceled => error.Canceled,
             error.Timeout => error.Timeout,
             error.Closed => {
@@ -259,7 +268,8 @@ pub fn connect(io: Io, gpa: Allocator, options: Options) ConnectError!*Client {
 }
 
 /// Stops the reader task, closes the connection and frees the client.
-/// All `Responses` must be deinitialised before.
+/// All `Responses` must be deinitialised before, and no other task may
+/// still use the client (requests, `send`, `nextNotice`).
 pub fn close(c: *Client) void {
     c.reader_task.cancel(c.io);
     c.transport.close();
@@ -335,26 +345,36 @@ pub fn send(c: *Client, id: wire.OutMsg, msg: anytype) Error!void {
 
 /// Starts routing messages matching `key` into `r`, which must stay at a
 /// fixed address until `r.deinit()`. `buffer` holds messages that were
-/// received but not yet read; when it is full the reader waits, so a
-/// request must keep reading its responses. `Responses.next` fails with
-/// `error.Timeout` once `timeout` (measured from now) has passed.
+/// received but not yet read; when it is full the reader waits (at most
+/// until the deadline), so a request must keep reading its responses.
+/// `Responses.next` fails with `error.Timeout` once `timeout` (measured
+/// from now) has passed. On failure `r` is left untouched and must not be
+/// deinitialised.
 pub fn register(c: *Client, r: *Responses, key: Key, end: ?wire.InMsg, buffer: []Incoming, timeout: Io.Timeout) Error!void {
     const io = c.io;
+    const deadline = timeout.toDeadline(io);
+    try c.routes_mutex.lock(io);
+    defer c.routes_mutex.unlock(io);
+    if (c.failure) |err| return err;
+    // Reserve the route first, so that `r` (which may be a registered
+    // request when the caller made a mistake) is only written on success.
+    const slot: *(*Responses) = switch (key) {
+        .req_id => |id| blk: {
+            const entry = try c.by_req_id.getOrPut(c.gpa, id);
+            if (entry.found_existing) return error.RequestIdInUse;
+            break :blk entry.value_ptr;
+        },
+        .kinds => try c.by_kind.addOne(c.gpa),
+    };
     r.* = .{
         .client = c,
         .key = key,
         .end = end,
         .box = .init(buffer),
-        .deadline = timeout.toDeadline(io),
+        .deadline = deadline,
         .ended = false,
     };
-    try c.routes_mutex.lock(io);
-    defer c.routes_mutex.unlock(io);
-    if (c.failure) |err| return err;
-    switch (key) {
-        .req_id => |id| try c.by_req_id.putNoClobber(c.gpa, id, r),
-        .kinds => try c.by_kind.append(c.gpa, r),
-    }
+    slot.* = r;
 }
 
 /// Registers `r` for messages of `kinds` (see `register`) and sends the
@@ -396,6 +416,7 @@ pub fn currentTime(c: *Client) (Error || error{UnexpectedResponse})!i64 {
 
     var msg = (try r.next()) orelse return error.UnexpectedResponse;
     defer msg.deinit(c.gpa);
+    if (msg != .current_time) return error.UnexpectedResponse;
     return msg.current_time.currentTime orelse error.UnexpectedResponse;
 }
 
@@ -475,7 +496,7 @@ pub const OptionChainList = List(proto.SecDefOptParameter);
 /// take long; raise `opts.timeout` for them.
 pub fn contractDetails(c: *Client, gpa: Allocator, query: contract.Query, opts: RequestOptions) RequestError!ContractDetailsList {
     const req_id = c.nextRequestId();
-    var buffer: [64]Incoming = undefined;
+    var buffer: [response_buffer_len]Incoming = undefined;
     var r: Responses = undefined;
     try c.register(&r, .{ .req_id = req_id }, .contract_data_end, &buffer, c.timeoutFor(opts));
     defer r.deinit();
@@ -496,7 +517,7 @@ pub fn contractDetails(c: *Client, gpa: Allocator, query: contract.Query, opts: 
 /// Free the result with `deinit`.
 pub fn optionChainParams(c: *Client, gpa: Allocator, underlying: contract.Underlying, opts: RequestOptions) RequestError!OptionChainList {
     const req_id = c.nextRequestId();
-    var buffer: [16]Incoming = undefined;
+    var buffer: [response_buffer_len]Incoming = undefined;
     var r: Responses = undefined;
     try c.register(&r, .{ .req_id = req_id }, .sec_def_opt_parameter_end, &buffer, c.timeoutFor(opts));
     defer r.deinit();
@@ -508,7 +529,7 @@ pub fn optionChainParams(c: *Client, gpa: Allocator, underlying: contract.Underl
         .underlyingSecType = underlying.sec_type.code(),
         .underlyingConId = underlying.con_id,
     });
-    // TWS has no cancel for this request; a late answer is dropped.
+    // TWS has no cancel for this request; a late answer goes to the notices.
     const items = try c.collect(gpa, &r, opts.diagnostics, proto.SecDefOptParameter, &.{.sec_def_opt_parameter});
     return .{ .gpa = gpa, .items = items };
 }
@@ -559,7 +580,7 @@ pub fn searchSymbols(c: *Client, gpa: Allocator, pattern: []const u8, opts: Requ
 /// limit of simultaneous market data lines (usually 100).
 pub fn snapshot(c: *Client, query: contract.Query, opts: RequestOptions) RequestError!market_data.Quote {
     const req_id = c.nextRequestId();
-    var buffer: [32]Incoming = undefined;
+    var buffer: [response_buffer_len]Incoming = undefined;
     var r: Responses = undefined;
     const timeout: Io.Timeout = .{ .duration = .{ .raw = opts.timeout orelse c.snapshot_timeout, .clock = .awake } };
     try c.register(&r, .{ .req_id = req_id }, .tick_snapshot_end, &buffer, timeout);
@@ -572,9 +593,7 @@ pub fn snapshot(c: *Client, query: contract.Query, opts: RequestOptions) Request
     });
     return c.collectQuote(&r, opts.diagnostics) catch |err| {
         if (err == error.Timeout or err == error.Canceled) {
-            c.send(.cancel_mkt_data, proto.CancelMarketData{ .reqId = req_id }) catch |e| {
-                log.debug("cannot cancel market data request {d}: {t}", .{ req_id, e });
-            };
+            c.sendCancel(.cancel_mkt_data, proto.CancelMarketData{ .reqId = req_id });
         }
         return err;
     };
@@ -595,7 +614,7 @@ pub const OrderList = List(orders.Order);
 /// and order status messages); they are delivered as notices
 /// (`nextNotice`).
 pub fn openOrders(c: *Client, gpa: Allocator, opts: RequestOptions) RequestError!OrderList {
-    var buffer: [64]Incoming = undefined;
+    var buffer: [response_buffer_len]Incoming = undefined;
     var r: Responses = undefined;
     const kinds = &[_]wire.InMsg{ .open_order, .order_status, .open_order_end };
     try c.registerKindsAndSend(&r, kinds, .open_order_end, &buffer, c.timeoutFor(opts), .req_all_open_orders, proto.AllOpenOrdersRequest{});
@@ -632,7 +651,7 @@ pub const CompletedOrdersOptions = struct {
 /// `Order.state` (`status`, `completedTime`, `completedStatus`). Free the
 /// result with `deinit`.
 pub fn completedOrders(c: *Client, gpa: Allocator, opts: CompletedOrdersOptions) RequestError!OrderList {
-    var buffer: [64]Incoming = undefined;
+    var buffer: [response_buffer_len]Incoming = undefined;
     var r: Responses = undefined;
     const kinds = &[_]wire.InMsg{ .completed_order, .completed_orders_end };
     const timeout = c.timeoutFor(.{ .timeout = opts.timeout });
@@ -741,9 +760,16 @@ fn nextResponse(c: *Client, r: *Responses, diagnostics: ?*Diagnostics) RequestEr
 /// Best effort: older servers cannot cancel and the response is then dropped.
 fn cancelContractData(c: *Client, req_id: i32) void {
     if (c.server_version < 215) return;
-    c.send(.cancel_contract_data, proto.CancelContractData{ .reqId = req_id }) catch |err| {
-        log.debug("cannot cancel contract data request {d}: {t}", .{ req_id, err });
-    };
+    c.sendCancel(.cancel_contract_data, proto.CancelContractData{ .reqId = req_id });
+}
+
+/// Best-effort send of a message that cancels a server-side request. Works
+/// also when the calling task has been canceled (that is often why the
+/// request is abandoned); it is still bounded by `Options.write_timeout`.
+fn sendCancel(c: *Client, id: wire.OutMsg, msg: anytype) void {
+    const old = c.io.swapCancelProtection(.blocked);
+    defer _ = c.io.swapCancelProtection(old);
+    c.send(id, msg) catch |err| log.debug("cannot send {t}: {t}", .{ id, err });
 }
 
 fn connectHost(host: net.HostName, io: Io, port: u16) net.HostName.ConnectError!net.Stream {
@@ -838,7 +864,10 @@ fn handshake(c: *Client, options: Options) ConnectError!void {
             },
             else => return c.readError(err),
         };
-        var inc = Incoming.decode(c.gpa, msg) catch return error.ProtocolViolation;
+        var inc = Incoming.decode(c.gpa, msg) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.ProtocolViolation,
+        };
         switch (inc) {
             .next_valid_id => |m| {
                 c.next_order_id.store(m.orderId orelse -1, .monotonic);
@@ -905,12 +934,17 @@ fn dispatch(c: *Client, msg: Incoming) Io.Cancelable!void {
         return;
     };
     const id = m.msgId();
-    // Waits while the request's buffer is full. This is bounded: the request
-    // either reads, or times out and closes its mailbox in `deinit`.
-    route.box.put(io, m) catch |err| {
+    // Waits while the request's buffer is full, at most until the request's
+    // deadline: a request that does not read its responses must not stop
+    // the reader (and with it every other request) for longer.
+    route.box.put(io, m, route.deadline) catch |err| {
         m.deinit(c.gpa);
         switch (err) {
             error.Closed => return, // The request gave up; drop the message.
+            error.Timeout => {
+                log.warn("request did not read its responses before its deadline; dropping message {d}", .{@backingInt(id)});
+                return;
+            },
             error.Canceled => return error.Canceled,
         }
     };
@@ -1727,6 +1761,49 @@ test "outgoing messages are paced" {
         for (0..6) |_| _ = try c.currentTime();
         const elapsed = start.durationTo(Io.Clock.Timestamp.now(io, .awake));
         try testing.expect(elapsed.raw.toMilliseconds() >= 900);
+    }
+    try script.await(io);
+}
+
+fn serveUnreadResponses(server: *FakeServer) !void {
+    const conn = try server.accept(testing.io, testing.allocator);
+    defer conn.deinit();
+    try conn.handshake(0);
+
+    const req = try conn.readRequest();
+    try testing.expectEqual(wire.OutMsg.req_mkt_data, req.id);
+    for (0..3) |i| {
+        try conn.send(.tick_price, proto.TickPrice{ .reqId = 777, .tickType = 1, .price = 100 + @as(f64, @floatFromInt(i)) });
+    }
+    const time = try conn.readRequest();
+    try testing.expectEqual(wire.OutMsg.req_current_time, time.id);
+    try conn.send(.current_time, proto.CurrentTime{ .currentTime = 42 });
+    try conn.expectClose();
+}
+
+test "a request that does not read its responses stalls others only until its deadline" {
+    const io = testing.io;
+    var server = try FakeServer.listen(io);
+    defer server.deinit(io);
+    var script = try io.concurrent(serveUnreadResponses, .{&server});
+    defer script.cancel(io) catch {};
+
+    const c = try Client.connect(io, testing.allocator, .{ .port = server.port });
+    {
+        defer c.close();
+        var buffer: [1]Incoming = undefined;
+        var r: Responses = undefined;
+        try c.register(&r, .{ .req_id = 777 }, .tick_snapshot_end, &buffer, .{ .duration = .{ .raw = millis(300), .clock = .awake } });
+        defer r.deinit();
+        var other: Responses = undefined;
+        try testing.expectError(error.RequestIdInUse, c.register(&other, .{ .req_id = 777 }, null, &buffer, .none));
+        try c.send(.req_mkt_data, proto.MarketDataRequest{ .reqId = 777, .snapshot = true });
+
+        // The reader is stuck on the full buffer of `r` until its deadline;
+        // after that it drops r's messages and serves this request.
+        try testing.expectEqual(@as(i64, 42), try c.currentTime());
+        // `r` has a message queued, but its deadline has passed.
+        try testing.expectError(error.Timeout, r.next());
     }
     try script.await(io);
 }

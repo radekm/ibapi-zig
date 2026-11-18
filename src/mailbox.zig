@@ -21,7 +21,7 @@ pub fn Mailbox(comptime T: type) type {
         /// Errors of `get`.
         pub const GetError = error{ Closed, Timeout } || Io.Cancelable;
         /// Errors of `put`.
-        pub const PutError = error{Closed} || Io.Cancelable;
+        pub const PutError = error{ Closed, Timeout } || Io.Cancelable;
 
         /// Creates an empty, open mailbox storing at most `buffer.len` elements.
         pub fn init(buffer: []T) Self {
@@ -29,13 +29,14 @@ pub fn Mailbox(comptime T: type) type {
             return .{ .buffer = buffer };
         }
 
-        /// Adds `item`, waiting while the mailbox is full. Fails with
-        /// `error.Closed` if the mailbox is or becomes closed; then `item`
-        /// stays owned by the caller.
-        pub fn put(m: *Self, io: Io, item: T) PutError!void {
+        /// Adds `item`, waiting at most `timeout` while the mailbox is full.
+        /// Fails with `error.Closed` if the mailbox is or becomes closed, or
+        /// with `error.Timeout`; in both cases `item` stays owned by the caller.
+        pub fn put(m: *Self, io: Io, item: T, timeout: Io.Timeout) PutError!void {
+            const deadline = timeout.toDeadline(io);
             try m.mutex.lock(io);
             defer m.mutex.unlock(io);
-            while (!m.closed and m.len == m.buffer.len) try m.not_full.wait(io, &m.mutex);
+            while (!m.closed and m.len == m.buffer.len) try m.not_full.waitTimeout(io, &m.mutex, deadline);
             if (m.closed) return error.Closed;
             m.pushLocked(io, item);
         }
@@ -55,12 +56,29 @@ pub fn Mailbox(comptime T: type) type {
             m.not_empty.signal(io);
         }
 
-        /// Removes the oldest element. Elements put before `close` are still
-        /// returned; afterwards `error.Closed`.
+        /// Removes the oldest element, waiting at most `timeout` while the
+        /// mailbox is empty. Elements put before `close` are still returned;
+        /// afterwards `error.Closed`.
         pub fn get(m: *Self, io: Io, timeout: Io.Timeout) GetError!T {
-            const deadline = timeout.toDeadline(io);
+            return m.getImpl(io, timeout.toDeadline(io), false);
+        }
+
+        /// Like `get`, but fails with `error.Timeout` once `deadline` has
+        /// passed even if elements are queued, so a producer that never stops
+        /// cannot keep the consumer busy past its deadline. A closed mailbox
+        /// holds only a finite remainder, which is still returned.
+        pub fn getBefore(m: *Self, io: Io, deadline: Io.Timeout) GetError!T {
+            return m.getImpl(io, deadline, true);
+        }
+
+        fn getImpl(m: *Self, io: Io, deadline: Io.Timeout, strict: bool) GetError!T {
             try m.mutex.lock(io);
             defer m.mutex.unlock(io);
+            if (strict and !m.closed) {
+                if (deadline.toDurationFromNow(io)) |left| {
+                    if (left.raw.toNanoseconds() <= 0) return error.Timeout;
+                }
+            }
             while (m.len == 0) {
                 if (m.closed) return error.Closed;
                 try m.not_empty.waitTimeout(io, &m.mutex, deadline);
@@ -105,7 +123,7 @@ test "elements come out in order and get times out when empty" {
     const io = testing.io;
     var buf: [2]u32 = undefined;
     var m: Mailbox(u32) = .init(&buf);
-    try m.put(io, 1);
+    try m.put(io, 1, .none);
     try testing.expect(m.tryPut(io, 2));
     try testing.expect(!m.tryPut(io, 3)); // full
     try testing.expectEqual(@as(u32, 1), try m.get(io, .none));
@@ -117,16 +135,16 @@ test "close drains remaining elements, then reports Closed" {
     const io = testing.io;
     var buf: [2]u32 = undefined;
     var m: Mailbox(u32) = .init(&buf);
-    try m.put(io, 7);
+    try m.put(io, 7, .none);
     m.close(io);
-    try testing.expectError(error.Closed, m.put(io, 8));
+    try testing.expectError(error.Closed, m.put(io, 8, .none));
     try testing.expectEqual(@as(u32, 7), try m.get(io, .none));
     try testing.expectError(error.Closed, m.get(io, ms(1000)));
 }
 
 fn putLater(m: *Mailbox(u32)) !void {
     try testing.io.sleep(.fromMilliseconds(20), .awake);
-    try m.put(testing.io, 42);
+    try m.put(testing.io, 42, .none);
 }
 
 test "a waiting get is woken by put from another task" {
@@ -148,9 +166,35 @@ test "close wakes a blocked put" {
     const io = testing.io;
     var buf: [1]u32 = undefined;
     var m: Mailbox(u32) = .init(&buf);
-    try m.put(io, 1);
+    try m.put(io, 1, .none);
     var task = try io.concurrent(closeLater, .{&m});
     defer task.cancel(io) catch {};
-    try testing.expectError(error.Closed, m.put(io, 2));
+    try testing.expectError(error.Closed, m.put(io, 2, .none));
     try task.await(io);
+}
+
+test "put gives up after its timeout" {
+    const io = testing.io;
+    var buf: [1]u32 = undefined;
+    var m: Mailbox(u32) = .init(&buf);
+    try m.put(io, 1, .none);
+    try testing.expectError(error.Timeout, m.put(io, 2, ms(20)));
+    try testing.expectEqual(@as(u32, 1), try m.get(io, .none));
+}
+
+test "getBefore stops at the deadline even when elements are queued" {
+    const io = testing.io;
+    var buf: [2]u32 = undefined;
+    var m: Mailbox(u32) = .init(&buf);
+    try m.put(io, 1, .none);
+    const past: Io.Timeout = .{ .deadline = Io.Clock.Timestamp.now(io, .awake) };
+    try io.sleep(.fromMilliseconds(1), .awake);
+    try testing.expectError(error.Timeout, m.getBefore(io, past));
+    // A plain get still returns queued elements.
+    try testing.expectEqual(@as(u32, 1), try m.get(io, ms(0)));
+    // A closed mailbox returns its remainder even after the deadline.
+    try m.put(io, 2, .none);
+    m.close(io);
+    try testing.expectEqual(@as(u32, 2), try m.getBefore(io, past));
+    try testing.expectError(error.Closed, m.getBefore(io, past));
 }

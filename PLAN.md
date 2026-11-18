@@ -149,6 +149,11 @@ application closes the client and connects again (documented).
 - [x] Opt-in integration test `zig build test-integration` (`tests/integration.zig`,
       compiled by `zig build test`): refuses non-paper logins (account ids not
       starting with `D`), read-only steps, lists what TWS sends unasked after connecting
+- [x] Review for undefined behaviour and liveness (see the commit "Fix issues
+      found in the review"): unnamed enum values printed with `@tagName`,
+      `.?` on server data, duplicate request ids, reader blocked without a
+      timeout on a full request buffer, requests kept busy past their deadline,
+      cancel messages not sent from canceled tasks, large stack buffers
 - [ ] Run the integration test against a real paper TWS / IB Gateway (owner) and
       resolve the open questions below
 
@@ -177,5 +182,8 @@ application closes the client and connects again (documented).
 - `ErrorMessage.id` is an order id for order-related errors; such an error
   could be misrouted to a pending request with the same request id. Not an
   issue while the library places no orders; revisit before the order phase.
+- How does TWS encode unset decimal quantities (`Order.totalQuantity`,
+  `OrderStatus.filled`, tick sizes) in protobuf: empty/absent, or a huge
+  sentinel number? `parseDecimal` treats only empty/absent as unset.
 - Warning codes: only 2100–2199 are treated as non-terminal for requests so far;
   extend in M4 (e.g. 10167 delayed market data) when market data needs it.
