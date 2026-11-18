@@ -2,7 +2,6 @@
 //!
 //! Usage:
 //!   orders              open orders of all clients and of TWS
-//!   orders mine         open orders of this client id only
 //!   orders completed    orders completed today
 //!
 //! Connection: IBAPI_HOST, IBAPI_PORT, IBAPI_CLIENT_ID (see common.zig).
@@ -24,9 +23,7 @@ pub fn main(init: std.process.Init) !void {
     defer client.close();
 
     var list = if (std.mem.eql(u8, mode, "all"))
-        try client.openOrders(gpa, .all_clients, .{})
-    else if (std.mem.eql(u8, mode, "mine"))
-        try client.openOrders(gpa, .this_client, .{})
+        try client.openOrders(gpa, .{})
     else if (std.mem.eql(u8, mode, "completed"))
         try client.completedOrders(gpa, .{})
     else
@@ -65,6 +62,6 @@ fn printOrder(io: std.Io, o: *const Order) !void {
 }
 
 fn usage() error{InvalidArguments} {
-    std.log.err("usage: orders [all | mine | completed]", .{});
+    std.log.err("usage: orders [all | completed]", .{});
     return error.InvalidArguments;
 }

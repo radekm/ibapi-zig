@@ -8,7 +8,7 @@ cancel them; the messages for that are not even part of the library.
 ## Open orders
 
 ```zig
-var list = try client.openOrders(gpa, .all_clients, .{});
+var list = try client.openOrders(gpa, .{});
 defer list.deinit();
 for (list.items) |*o| {
     std.debug.print("{s} {?d} {s} {t}, filled {?d} of {?d}\n", .{
@@ -22,16 +22,13 @@ for (list.items) |*o| {
 }
 ```
 
-The second argument selects which orders TWS returns:
+`openOrders` returns the orders of all API clients and the orders entered in
+TWS (TWS request `ReqAllOpenOrders`) and changes nothing in TWS.
 
-| Scope | TWS request | Orders |
-| --- | --- | --- |
-| `.all_clients` | `ReqAllOpenOrders` | orders of all API clients and orders entered in TWS |
-| `.this_client` | `ReqOpenOrders` | only orders placed by this client id |
-
-`.all_clients` changes nothing in TWS. With `.this_client` and **client id 0**,
-TWS additionally *binds* orders entered manually in TWS to this API client,
-i.e. assigns them API order ids. Use `.all_clients` if you only want to look.
+The library deliberately does not offer `ReqOpenOrders` (orders of this
+client id only): for client id 0 TWS would *bind* orders entered manually in
+TWS to the API client, i.e. assign them API order ids. To see only your own
+orders, filter by `clientId()`.
 
 ## What an order contains
 
@@ -105,6 +102,5 @@ the timeout is delivered as notices.
 
 ```sh
 ./zig-out/bin/orders             # all open orders
-./zig-out/bin/orders mine        # orders of this client id
 ./zig-out/bin/orders completed   # completed orders
 ```

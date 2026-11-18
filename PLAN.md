@@ -66,7 +66,7 @@ var chain = try client.optionChainParams(gpa, .{ .symbol = "AAPL", .con_id = 265
 const quote = try client.snapshot(ibapi.contract.Query.byConId(265598, "SMART"), .{});
 
 // Open orders of the account(s), merged with their latest status.
-var orders = try client.openOrders(gpa, .all_clients, .{});
+var orders = try client.openOrders(gpa, .{});
 defer orders.deinit();
 ```
 
@@ -127,9 +127,9 @@ Owner's decisions: only snapshots, **never streaming subscriptions**; only
 - [x] Routing by a set of message kinds (`Client.Key.kinds`); requests routed by
       kind are registered and sent under one lock (`registerKindsAndSend`), so
       their FIFO order matches the order the server receives them
-- [x] `openOrders(gpa, scope, opts)` — `.all_clients` (ReqAllOpenOrders, default
-      in docs) / `.this_client` (ReqOpenOrders; binds TWS orders for client id 0,
-      documented), collect `OpenOrder` + `OrderStatus` until `OpenOrderEnd`
+- [x] `openOrders(gpa, opts)` — ReqAllOpenOrders, collect `OpenOrder` + `OrderStatus`
+      until `OpenOrderEnd`. Owner's decision: no ReqOpenOrders (for client id 0 it
+      binds manual TWS orders); it is not even in `wire.OutMsg`
 - [x] Merge open order and its latest status into one `orders.Order` view
       (matched by perm id, else by order id + client id), typed helpers
       (`Status`, `Action`, quantities, prices)

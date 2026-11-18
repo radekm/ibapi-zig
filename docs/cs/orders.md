@@ -8,7 +8,7 @@ rušit; zprávy, které by to dělaly, v knihovně vůbec nejsou.
 ## Otevřené příkazy
 
 ```zig
-var list = try client.openOrders(gpa, .all_clients, .{});
+var list = try client.openOrders(gpa, .{});
 defer list.deinit();
 for (list.items) |*o| {
     std.debug.print("{s} {?d} {s} {t}, vyplněno {?d} z {?d}\n", .{
@@ -22,16 +22,13 @@ for (list.items) |*o| {
 }
 ```
 
-Druhý argument určuje, které příkazy TWS vrátí:
+`openOrders` vrací příkazy všech API klientů a příkazy zadané v TWS
+(požadavek TWS `ReqAllOpenOrders`) a v TWS nic nemění.
 
-| Rozsah | Požadavek TWS | Příkazy |
-| --- | --- | --- |
-| `.all_clients` | `ReqAllOpenOrders` | příkazy všech API klientů a příkazy zadané v TWS |
-| `.this_client` | `ReqOpenOrders` | jen příkazy zadané tímto client id |
-
-`.all_clients` v TWS nic nemění. S `.this_client` a **client id 0** TWS navíc
-*přiváže* příkazy zadané ručně v TWS k tomuto API klientovi, tj. přidělí jim
-API order id. Pokud se chcete jen dívat, použijte `.all_clients`.
+Knihovna záměrně nenabízí `ReqOpenOrders` (jen příkazy tohoto client id):
+pro client id 0 by TWS ruční příkazy z TWS *přivázal* k API klientovi, tj.
+přidělil jim API order id. Jen vlastní příkazy získáte filtrováním podle
+`clientId()`.
 
 ## Co příkaz obsahuje
 
@@ -106,6 +103,5 @@ po vypršení limitu, se doručí jako notices.
 
 ```sh
 ./zig-out/bin/orders             # všechny otevřené příkazy
-./zig-out/bin/orders mine        # příkazy tohoto client id
 ./zig-out/bin/orders completed   # dokončené příkazy
 ```

@@ -565,32 +565,22 @@ pub fn snapshot(c: *Client, query: contract.Query, opts: RequestOptions) Request
 /// Orders returned by `openOrders` and `completedOrders`.
 pub const OrderList = List(orders.Order);
 
-/// Which open orders `openOrders` returns.
-pub const OrderScope = enum {
-    /// Orders of all API clients and orders entered in TWS
-    /// (`ReqAllOpenOrders`). Does not change anything in TWS.
-    all_clients,
-    /// Only orders placed by this client id (`ReqOpenOrders`). Note that for
-    /// client id 0 TWS also binds orders entered manually in TWS to this
-    /// client, i.e. it assigns them API order ids.
-    this_client,
-};
-
-/// Returns the open orders with their latest status, one `orders.Order` per
-/// order. Read-only: the library cannot change orders. Free the result
-/// with `deinit`.
+/// Returns the open orders of all API clients and the orders entered in
+/// TWS (`ReqAllOpenOrders`), each merged with its latest status into one
+/// `orders.Order`. Read-only: the request changes nothing in TWS. Free the
+/// result with `deinit`.
+///
+/// `ReqOpenOrders` (orders of this client id only) is deliberately not
+/// used: for client id 0 TWS would bind manual TWS orders to the client.
 ///
 /// After this request TWS keeps sending updates of the orders (open order
 /// and order status messages); they are delivered as notices
 /// (`nextNotice`).
-pub fn openOrders(c: *Client, gpa: Allocator, scope: OrderScope, opts: RequestOptions) RequestError!OrderList {
+pub fn openOrders(c: *Client, gpa: Allocator, opts: RequestOptions) RequestError!OrderList {
     var buffer: [64]Incoming = undefined;
     var r: Responses = undefined;
     const kinds = &[_]wire.InMsg{ .open_order, .order_status, .open_order_end };
-    switch (scope) {
-        .all_clients => try c.registerKindsAndSend(&r, kinds, .open_order_end, &buffer, c.timeoutFor(opts), .req_all_open_orders, proto.AllOpenOrdersRequest{}),
-        .this_client => try c.registerKindsAndSend(&r, kinds, .open_order_end, &buffer, c.timeoutFor(opts), .req_open_orders, proto.OpenOrdersRequest{}),
-    }
+    try c.registerKindsAndSend(&r, kinds, .open_order_end, &buffer, c.timeoutFor(opts), .req_all_open_orders, proto.AllOpenOrdersRequest{});
     defer r.deinit();
 
     // TWS has no cancel for this request; a late answer goes to the notices.
@@ -1552,10 +1542,10 @@ fn serveOrders(server: *FakeServer) !void {
         try conn.send(.order_status, proto.OrderStatus{ .orderId = 0, .permId = 2002, .status = "PreSubmitted", .filled = "0", .remaining = "10" });
         try conn.send(.open_order_end, proto.OpenOrdersEnd{});
     }
-    // 2. Orders of this client: none.
+    // 2. No open orders.
     {
         const req = try conn.readRequest();
-        try testing.expectEqual(wire.OutMsg.req_open_orders, req.id);
+        try testing.expectEqual(wire.OutMsg.req_all_open_orders, req.id);
         try conn.send(.open_order_end, proto.OpenOrdersEnd{});
     }
     // 3. Completed orders.
@@ -1605,7 +1595,7 @@ test "open and completed orders" {
     {
         defer c.close();
 
-        var all = try c.openOrders(gpa, .all_clients, .{});
+        var all = try c.openOrders(gpa, .{});
         defer all.deinit();
         try testing.expectEqual(@as(usize, 3), all.items.len);
 
@@ -1628,9 +1618,9 @@ test "open and completed orders" {
         try testing.expectEqual(@as(?proto.OrderStatus, null), tsla.status);
         try testing.expectEqual(orders.Status.pre_submitted, tsla.statusKind());
 
-        var mine = try c.openOrders(gpa, .this_client, .{});
-        defer mine.deinit();
-        try testing.expectEqual(@as(usize, 0), mine.items.len);
+        var none = try c.openOrders(gpa, .{});
+        defer none.deinit();
+        try testing.expectEqual(@as(usize, 0), none.items.len);
 
         var done = try c.completedOrders(gpa, .{ .api_only = true });
         defer done.deinit();
@@ -1639,7 +1629,7 @@ test "open and completed orders" {
         try testing.expectEqualStrings("Filled Size: 50", done.items[0].state.completedStatus.?);
         try testing.expectEqual(orders.Status.cancelled, done.items[1].statusKind());
 
-        try testing.expectError(error.Timeout, c.openOrders(gpa, .all_clients, .{ .timeout = millis(100) }));
+        try testing.expectError(error.Timeout, c.openOrders(gpa, .{ .timeout = millis(100) }));
         try testing.expectEqual(@as(i64, 42), try c.currentTime());
 
         // Notices: 2104 from the handshake, 2106 from the middle of the
@@ -1677,7 +1667,7 @@ fn serveOrdersAndTime(server: *FakeServer) !void {
 }
 
 fn openOrdersTask(c: *Client) !usize {
-    var list = try c.openOrders(testing.allocator, .all_clients, .{});
+    var list = try c.openOrders(testing.allocator, .{});
     defer list.deinit();
     try testing.expectEqual(orders.Status.submitted, list.items[0].statusKind());
     return list.items.len;

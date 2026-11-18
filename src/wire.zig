@@ -56,11 +56,11 @@ pub const InMsg = enum(u32) {
 };
 
 /// Ids of messages sent by the client. Only read-only requests are listed;
-/// order-changing requests are deliberately absent (see AGENTS.md).
+/// order-changing requests are deliberately absent (see AGENTS.md), and so
+/// is `ReqOpenOrders` (5), which binds manual TWS orders for client id 0.
 pub const OutMsg = enum(u32) {
     req_mkt_data = 1,
     cancel_mkt_data = 2,
-    req_open_orders = 5,
     req_ids = 8,
     req_contract_data = 9,
     req_all_open_orders = 16,
