@@ -27,6 +27,7 @@ const wire = @import("wire.zig");
 const Incoming = @import("incoming.zig").Incoming;
 const Mailbox = @import("mailbox.zig").Mailbox;
 const Transport = @import("Transport.zig");
+const Pacer = @import("Pacer.zig");
 const contract = @import("contract.zig");
 const market_data = @import("market_data.zig");
 const orders = @import("orders.zig");
@@ -50,6 +51,8 @@ write_timeout: Io.Duration,
 
 /// Serialises writers of whole frames.
 write_mutex: Io.Mutex,
+/// Rate limit of outgoing messages; guarded by `write_mutex`.
+pacer: Pacer,
 /// Held while a request answered by message kind is registered and sent, so
 /// that such requests are queued in the order the server receives them.
 kind_mutex: Io.Mutex,
@@ -119,6 +122,10 @@ pub const Options = struct {
     snapshot_timeout: Io.Duration = .fromSeconds(15),
     /// Limit for sending one message.
     write_timeout: Io.Duration = .fromSeconds(5),
+    /// Most messages sent in any one second; further messages wait. TWS
+    /// disconnects clients that exceed 50 messages per second. 0 disables
+    /// the limit.
+    max_messages_per_second: u8 = 50,
     /// Market data requested by `snapshot`. `.frozen` returns live data while
     /// the market is open and the last values when it is closed.
     market_data_type: market_data.MarketDataType = .frozen,
@@ -214,6 +221,7 @@ pub fn connect(io: Io, gpa: Allocator, options: Options) ConnectError!*Client {
         .snapshot_timeout = options.snapshot_timeout,
         .write_timeout = options.write_timeout,
         .write_mutex = .init,
+        .pacer = .init(options.max_messages_per_second),
         .kind_mutex = .init,
         .server_version = 0,
         .connection_time = &.{},
@@ -303,12 +311,22 @@ pub fn nextNotice(c: *Client, timeout: Io.Timeout) (Io.Cancelable || error{Timeo
 }
 
 /// Sends a protobuf request. Safe to call from several tasks at once.
-/// Fails with `error.Timeout` if the message cannot be sent within
-/// `Options.write_timeout`; the connection is closed in that case.
+/// Waits when `Options.max_messages_per_second` would be exceeded. Fails
+/// with `error.Timeout` if the message cannot be sent within
+/// `Options.write_timeout`; if writing had already started, the connection
+/// is closed in that case.
 pub fn send(c: *Client, id: wire.OutMsg, msg: anytype) Error!void {
     const io = c.io;
     try c.write_mutex.lock(io);
     defer c.write_mutex.unlock(io);
+    var now = Io.Clock.Timestamp.now(io, .awake);
+    if (c.pacer.delay(now.raw)) |wait| {
+        // Nothing has been written yet, so the connection stays usable.
+        if (wait.toNanoseconds() > c.write_timeout.toNanoseconds()) return error.Timeout;
+        try io.sleep(wait, .awake);
+        now = Io.Clock.Timestamp.now(io, .awake);
+    }
+    c.pacer.record(now.raw);
     c.transport.write_timeout = (Io.Timeout{ .duration = .{ .raw = c.write_timeout, .clock = .awake } }).toDeadline(io);
     const w = &c.transport.writer;
     wire.writeProtobuf(w, c.gpa, id, msg) catch |err| return c.sendFailed(err);
@@ -1689,6 +1707,26 @@ test "open orders and another request run concurrently" {
         defer _ = b.cancel(io) catch {};
         try testing.expectEqual(@as(usize, 1), try a.await(io));
         try testing.expectEqual(@as(i64, 42), try b.await(io));
+    }
+    try script.await(io);
+}
+
+test "outgoing messages are paced" {
+    const io = testing.io;
+    var server = try FakeServer.listen(io);
+    defer server.deinit(io);
+    var script = try io.concurrent(serveCurrentTime, .{ &server, 6 });
+    defer script.cancel(io) catch {};
+
+    const c = try Client.connect(io, testing.allocator, .{ .port = server.port, .client_id = 3, .max_messages_per_second = 5 });
+    {
+        defer c.close();
+        // With the market data type sent by `connect` these are 7 messages,
+        // so the last two must wait for the one-second window to move.
+        const start = Io.Clock.Timestamp.now(io, .awake);
+        for (0..6) |_| _ = try c.currentTime();
+        const elapsed = start.durationTo(Io.Clock.Timestamp.now(io, .awake));
+        try testing.expect(elapsed.raw.toMilliseconds() >= 900);
     }
     try script.await(io);
 }

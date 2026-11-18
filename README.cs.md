@@ -18,8 +18,19 @@ Workstation (TWS) nebo IB Gateway pomocí **protobuf** varianty TWS API.
 ## Sestavení
 
 ```sh
-zig build test
+zig build test               # unit testy a testy proti falešnému TWS
+zig build examples           # ukázkové programy do zig-out/bin
+zig build docs               # referenční dokumentace API do zig-out/docs
+zig build test-integration   # volitelné, potřebuje paper TWS / IB Gateway (viz níže)
 ```
+
+### Integrační test
+
+`zig build test-integration` se připojí k běžícímu TWS / IB Gateway
+(`IBAPI_HOST`, `IBAPI_PORT`, `IBAPI_CLIENT_ID`; výchozí 127.0.0.1, 7497, 17),
+posílá jen požadavky, které nic nemění, a vypíše výsledek každého kroku.
+Odmítne běžet, pokud některý účet přihlášení není paper účet (id začínající
+na `D`). Kroky, které potřebují předplatné tržních dat, hlásí jako přeskočené.
 
 ## Protobuf zprávy
 
@@ -65,14 +76,31 @@ pub fn main(init: std.process.Init) !void {
     defer client.close();
 
     std.log.info("server version {d}, accounts {s}", .{ client.serverVersion(), client.managedAccounts() });
-    std.log.info("server time {d}", .{try client.currentTime()});
+
+    var details = try client.contractDetails(gpa, ibapi.contract.Query.stock("AAPL", "USD"), .{});
+    defer details.deinit();
+    const con_id = details.items[0].contract.?.conId.?;
+
+    const quote = try client.snapshot(ibapi.contract.Query.byConId(con_id, "SMART"), .{});
+    std.log.info("AAPL bid {?d} ask {?d}", .{ quote.bid, quote.ask });
+
+    var orders = try client.openOrders(gpa, .{});
+    defer orders.deinit();
+    std.log.info("{d} open orders", .{orders.items.len});
 }
 ```
+
+Všechny metody klienta a zprávy, které si vyměňují s TWS, jsou v přehledu
+[Metody klienta a jejich zprávy](docs/cs/api.md).
 
 Každá operace má timeout: `connect_timeout`, `request_timeout`,
 `snapshot_timeout` a `write_timeout` v `ibapi.Client.Options`
 (výchozí 10 s, 10 s, 15 s a 5 s) a
 `nextNotice` ho dostává explicitně. Vypršení se hlásí jako `error.Timeout`.
+Za sekundu se pošle nejvýš `max_messages_per_second` (50) zpráv.
+
+Klient se znovu nepřipojuje: po ztrátě spojení požadavky končí s
+`error.ConnectionClosed` / `error.ConnectionLost`; zavřete ho a připojte se znovu.
 
 Požadavky mohou na jednom spojení běžet souběžně, např.
 `var f = io.async(ibapi.Client.currentTime, .{client});` a později `try f.await(io)`.
@@ -81,6 +109,7 @@ přes `client.nextNotice(timeout)`.
 
 ## Návody
 
+- [Metody klienta a jejich zprávy](docs/cs/api.md)
 - [Vyhledávání kontraktů a opčních řetězců](docs/cs/contracts.md)
 - [Ceny akcií a opcí](docs/cs/prices.md)
 - [Příkazy (jen čtení)](docs/cs/orders.md)

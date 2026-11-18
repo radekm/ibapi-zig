@@ -138,10 +138,19 @@ Owner's decisions: only snapshots, **never streaming subscriptions**; only
 - [x] Example `examples/orders.zig`, guide `docs/{en,cs}/orders.md`
 
 ### M6 — Hardening and docs
-- [ ] Pacing / rate limit (max ~50 msgs/s) in the writer
-- [ ] Reconnect strategy (documented, opt-in)
-- [ ] API docs (`zig build docs`), README usage guide
-- [ ] Opt-in integration tests against a paper account
+Owner's decision: **no reconnect**. A lost connection fails all requests; the
+application closes the client and connects again (documented).
+- [x] Pacing in `Client.send`: at most `Options.max_messages_per_second` (50) in
+      any one-second window (`Pacer`); a wait longer than `write_timeout` fails
+      with `error.Timeout` before anything is written
+- [x] API docs (`zig build docs`), README usage guide
+- [x] `docs/{en,cs}/api.md`: every client method with the protobuf messages it
+      sends and receives, error and notice routing, limits
+- [x] Opt-in integration test `zig build test-integration` (`tests/integration.zig`,
+      compiled by `zig build test`): refuses non-paper logins (account ids not
+      starting with `D`), read-only steps, lists what TWS sends unasked after connecting
+- [ ] Run the integration test against a real paper TWS / IB Gateway (owner) and
+      resolve the open questions below
 
 ### Later phases (not started)
 - Account: positions, account summary, PnL, executions

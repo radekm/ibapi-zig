@@ -18,8 +18,19 @@ or IB Gateway using the **protobuf** variant of the TWS API.
 ## Building
 
 ```sh
-zig build test
+zig build test               # unit tests and tests against a fake TWS
+zig build examples           # example programs into zig-out/bin
+zig build docs               # API reference into zig-out/docs
+zig build test-integration   # opt-in, needs a paper TWS / IB Gateway (see below)
 ```
+
+### Integration test
+
+`zig build test-integration` connects to a running TWS / IB Gateway
+(`IBAPI_HOST`, `IBAPI_PORT`, `IBAPI_CLIENT_ID`; defaults 127.0.0.1, 7497, 17),
+sends only read-only requests and prints the result of each step. It refuses
+to run unless every account of the login is a paper account (id starting
+with `D`). Steps that need a market data subscription are reported as skipped.
 
 ## Protobuf messages
 
@@ -65,14 +76,31 @@ pub fn main(init: std.process.Init) !void {
     defer client.close();
 
     std.log.info("server version {d}, accounts {s}", .{ client.serverVersion(), client.managedAccounts() });
-    std.log.info("server time {d}", .{try client.currentTime()});
+
+    var details = try client.contractDetails(gpa, ibapi.contract.Query.stock("AAPL", "USD"), .{});
+    defer details.deinit();
+    const con_id = details.items[0].contract.?.conId.?;
+
+    const quote = try client.snapshot(ibapi.contract.Query.byConId(con_id, "SMART"), .{});
+    std.log.info("AAPL bid {?d} ask {?d}", .{ quote.bid, quote.ask });
+
+    var orders = try client.openOrders(gpa, .{});
+    defer orders.deinit();
+    std.log.info("{d} open orders", .{orders.items.len});
 }
 ```
+
+All methods of the client and the messages they exchange with TWS are listed
+in [Client methods and their messages](docs/en/api.md).
 
 Every operation has a timeout: `connect_timeout`, `request_timeout`,
 `snapshot_timeout` and `write_timeout` in `ibapi.Client.Options`
 (defaults 10 s, 10 s, 15 s and 5 s),
 and `nextNotice` takes one explicitly. Timeouts are reported as `error.Timeout`.
+At most `max_messages_per_second` (50) messages are sent per second.
+
+The client does not reconnect: after a lost connection requests fail with
+`error.ConnectionClosed` / `error.ConnectionLost`; close it and connect again.
 
 Requests can run concurrently on one connection, e.g.
 `var f = io.async(ibapi.Client.currentTime, .{client});` and later `try f.await(io)`.
@@ -81,6 +109,7 @@ Messages that belong to no request (informational errors etc.) are read with
 
 ## Guides
 
+- [Client methods and their messages](docs/en/api.md)
 - [Looking up contracts and option chains](docs/en/contracts.md)
 - [Prices of stocks and options](docs/en/prices.md)
 - [Orders (read-only)](docs/en/orders.md)

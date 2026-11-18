@@ -56,6 +56,32 @@ pub fn build(b: *std.Build) !void {
         test_step.dependOn(&exe.step);
     }
 
+    // Opt-in test against a paper TWS / IB Gateway. `zig build test` only
+    // compiles it.
+    const integration = b.addExecutable(.{
+        .name = "integration",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/integration.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "ibapi", .module = ibapi_mod }},
+        }),
+    });
+    test_step.dependOn(&integration.step);
+    const integration_step = b.step("test-integration", "Run the integration test against a paper TWS (IBAPI_HOST, IBAPI_PORT, IBAPI_CLIENT_ID)");
+    const run_integration = b.addRunArtifact(integration);
+    run_integration.has_side_effects = true;
+    integration_step.dependOn(&run_integration.step);
+
+    // API reference generated from the doc comments: zig-out/docs.
+    const docs_obj = b.addObject(.{ .name = "ibapi", .root_module = ibapi_mod });
+    const docs_step = b.step("docs", "Generate the API reference into zig-out/docs");
+    docs_step.dependOn(&b.addInstallDirectory(.{
+        .source_dir = docs_obj.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    }).step);
+
     try addGenProtoStep(b);
 }
 
