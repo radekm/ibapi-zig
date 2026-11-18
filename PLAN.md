@@ -60,7 +60,7 @@ var details = try client.contractDetails(gpa, ibapi.contract.Query.stock("AAPL",
 defer details.deinit();
 
 // Option chain parameters (expirations, strikes, exchanges).
-const chain = try client.optionChainParams(gpa, .{ .underlying_symbol = "AAPL", .underlying_con_id = 265598, .sec_type = .stk });
+var chain = try client.optionChainParams(gpa, .{ .symbol = "AAPL", .con_id = 265598 }, .{});
 
 // Price snapshot (bid/ask/last/close, greeks for options).
 const quote = try client.snapshot(gpa, .{ .con_id = 265598, .exchange = "SMART" });
@@ -110,9 +110,10 @@ and awaited later, so several requests run concurrently on one connection.
 - [x] Example `examples/contracts.zig`, guide `docs/{en,cs}/contracts.md`
 
 ### M3 — Option chains
-- [ ] `optionChainParams()` (SecDefOptParams: exchanges, expirations, strikes, multiplier)
-- [ ] Helper: list option contracts for an expiration via contract details
-- [ ] Example `examples/option_chain.zig`
+- [x] `optionChainParams()` (SecDefOptParams: exchanges, expirations, strikes, multiplier)
+- [x] No special helper for filtering by expiration (owner's decision): strikes of one
+      expiration come from `contractDetails`; documented in `docs/{en,cs}/contracts.md`
+- [x] Example `examples/option_chain.zig` (expirations within N days + strikes of the nearest)
 
 ### M4 — Prices
 - [ ] `setMarketDataType()` (live / frozen / delayed / delayed-frozen)

@@ -80,7 +80,7 @@ přes `client.nextNotice(timeout)`.
 
 ## Návody
 
-- [Vyhledávání kontraktů](docs/cs/contracts.md)
+- [Vyhledávání kontraktů a opčních řetězců](docs/cs/contracts.md)
 - [Síťový protokol](docs/cs/protocol.md)
 
 ## Příklady
@@ -90,6 +90,7 @@ zig build examples
 export IBAPI_HOST=127.0.0.1 IBAPI_PORT=7497 IBAPI_CLIENT_ID=1   # výchozí hodnoty
 ./zig-out/bin/connect
 ./zig-out/bin/contracts details AAPL
+./zig-out/bin/option_chain AAPL 45
 ```
 
 ## Licence

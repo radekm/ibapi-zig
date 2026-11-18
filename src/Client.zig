@@ -378,19 +378,28 @@ pub fn isWarningCode(code: i32) bool {
     return code >= 2100 and code < 2200;
 }
 
-/// Contract details returned by `contractDetails`.
-pub const ContractDetailsList = struct {
-    gpa: Allocator,
-    /// One entry per matching contract: `contract` and `contractDetails`.
-    items: []proto.ContractData,
+/// A list of protobuf messages returned by a request, allocated with `gpa`.
+pub fn List(comptime T: type) type {
+    return struct {
+        gpa: Allocator,
+        items: []T,
 
-    /// Frees the list and all entries.
-    pub fn deinit(l: *ContractDetailsList) void {
-        for (l.items) |*item| item.deinit(l.gpa);
-        l.gpa.free(l.items);
-        l.* = undefined;
-    }
-};
+        /// Frees the list and all its messages.
+        pub fn deinit(l: *@This()) void {
+            for (l.items) |*item| item.deinit(l.gpa);
+            l.gpa.free(l.items);
+            l.* = undefined;
+        }
+    };
+}
+
+/// Contract details returned by `contractDetails`: one entry per matching
+/// contract with fields `contract` and `contractDetails`.
+pub const ContractDetailsList = List(proto.ContractData);
+
+/// Option chain parameters returned by `optionChainParams`: one entry per
+/// exchange and trading class.
+pub const OptionChainList = List(proto.SecDefOptParameter);
 
 /// Looks up all contracts matching `query`, e.g. every exchange listing of a
 /// stock or every option of an expiration. The result is allocated with `gpa`
@@ -407,32 +416,36 @@ pub fn contractDetails(c: *Client, gpa: Allocator, query: contract.Query, opts: 
     defer r.deinit();
 
     try c.send(.req_contract_data, proto.ContractDataRequest{ .reqId = req_id, .contract = query.toProto() });
-    const items = collectContractDetails(c, gpa, &r, opts.diagnostics) catch |err| {
+    const items = c.collect(gpa, &r, opts.diagnostics, proto.ContractData, &.{ .contract_data, .bond_contract_data }) catch |err| {
         if (err == error.Timeout or err == error.Canceled) c.cancelContractData(req_id);
         return err;
     };
     return .{ .gpa = gpa, .items = items };
 }
 
-fn collectContractDetails(c: *Client, gpa: Allocator, r: *Responses, diagnostics: ?*Diagnostics) RequestError![]proto.ContractData {
-    var items: std.ArrayList(proto.ContractData) = .empty;
-    errdefer {
-        for (items.items) |*item| item.deinit(gpa);
-        items.deinit(gpa);
-    }
-    while (try c.nextResponse(r, diagnostics)) |msg| {
-        var m = msg;
-        defer m.deinit(c.gpa);
-        switch (m) {
-            .contract_data, .bond_contract_data => |data| {
-                try items.ensureUnusedCapacity(gpa, 1);
-                items.appendAssumeCapacity(try data.dupe(gpa));
-            },
-            .contract_data_end => {},
-            else => return error.UnexpectedResponse,
-        }
-    }
-    return items.toOwnedSlice(gpa);
+/// Returns the parameters of the option chain on `underlying`: for each
+/// exchange and trading class the multiplier, all expirations and all
+/// strikes. The strikes are the union over all expirations; a given
+/// expiration need not have every strike. For the actual strikes of one
+/// expiration use `contractDetails` with `contract.Query.option(…, expiry, null, right)`.
+/// Free the result with `deinit`.
+pub fn optionChainParams(c: *Client, gpa: Allocator, underlying: contract.Underlying, opts: RequestOptions) RequestError!OptionChainList {
+    const req_id = c.nextRequestId();
+    var buffer: [16]Incoming = undefined;
+    var r: Responses = undefined;
+    try c.register(&r, .{ .req_id = req_id }, .sec_def_opt_parameter_end, &buffer, c.timeoutFor(opts));
+    defer r.deinit();
+
+    try c.send(.req_sec_def_opt_params, proto.SecDefOptParamsRequest{
+        .reqId = req_id,
+        .underlyingSymbol = underlying.symbol,
+        .futFopExchange = underlying.fut_fop_exchange,
+        .underlyingSecType = underlying.sec_type.code(),
+        .underlyingConId = underlying.con_id,
+    });
+    // TWS has no cancel for this request; a late answer is dropped.
+    const items = try c.collect(gpa, &r, opts.diagnostics, proto.SecDefOptParameter, &.{.sec_def_opt_parameter});
+    return .{ .gpa = gpa, .items = items };
 }
 
 /// Symbols found by `searchSymbols`.
@@ -474,6 +487,37 @@ pub fn searchSymbols(c: *Client, gpa: Allocator, pattern: []const u8, opts: Requ
 
 fn timeoutFor(c: *const Client, opts: RequestOptions) Io.Timeout {
     return .{ .duration = .{ .raw = opts.timeout orelse c.request_timeout, .clock = .awake } };
+}
+
+/// Reads all responses of a request until its end message and returns copies
+/// (allocated with `gpa`) of the messages whose tag is in `tags`, all of
+/// payload type `T`. Any other message fails with `error.UnexpectedResponse`.
+fn collect(
+    c: *Client,
+    gpa: Allocator,
+    r: *Responses,
+    diagnostics: ?*Diagnostics,
+    comptime T: type,
+    comptime tags: []const std.meta.Tag(Incoming),
+) RequestError![]T {
+    var items: std.ArrayList(T) = .empty;
+    errdefer {
+        for (items.items) |*item| item.deinit(gpa);
+        items.deinit(gpa);
+    }
+    next: while (try c.nextResponse(r, diagnostics)) |msg| {
+        var m = msg;
+        defer m.deinit(c.gpa);
+        inline for (tags) |tag| {
+            if (m == tag) {
+                try items.ensureUnusedCapacity(gpa, 1);
+                items.appendAssumeCapacity(try @field(m, @tagName(tag)).dupe(gpa));
+                continue :next;
+            }
+        }
+        if (m.msgId() != r.end) return error.UnexpectedResponse;
+    }
+    return items.toOwnedSlice(gpa);
 }
 
 /// Returns the next response of a request. TWS errors for the request end it
@@ -1101,6 +1145,63 @@ test "contract details, rejections, timeouts and symbol search" {
         defer matches.deinit();
         try testing.expectEqual(@as(usize, 2), matches.items().len);
         try testing.expectEqualStrings("APP", matches.items()[1].contract.?.symbol.?);
+    }
+    try script.await(io);
+}
+
+fn serveOptionChain(server: *FakeServer) !void {
+    const gpa = testing.allocator;
+    const conn = try server.accept(testing.io, gpa);
+    defer conn.deinit();
+    try conn.handshake(0);
+
+    const req = try conn.readRequest();
+    try testing.expectEqual(wire.OutMsg.req_sec_def_opt_params, req.id);
+    var q = try req.decode(proto.SecDefOptParamsRequest, gpa);
+    defer q.deinit(gpa);
+    try testing.expectEqualStrings("AAPL", q.underlyingSymbol.?);
+    try testing.expectEqualStrings("STK", q.underlyingSecType.?);
+    try testing.expectEqual(@as(?i32, 265598), q.underlyingConId);
+    try testing.expectEqual(@as(?[]const u8, null), q.futFopExchange);
+
+    for ([_][]const u8{ "SMART", "CBOE" }) |exchange| {
+        var p: proto.SecDefOptParameter = .{
+            .reqId = q.reqId,
+            .exchange = exchange,
+            .underlyingConId = 265598,
+            .tradingClass = "AAPL",
+            .multiplier = "100",
+        };
+        defer p.expirations.deinit(gpa);
+        defer p.strikes.deinit(gpa);
+        try p.expirations.appendSlice(gpa, &.{ "20261120", "20261127", "20261218" });
+        try p.strikes.appendSlice(gpa, &.{ 180, 185, 190, 195, 200 });
+        try conn.send(.sec_def_opt_parameter, p);
+    }
+    try conn.send(.sec_def_opt_parameter_end, proto.SecDefOptParameterEnd{ .reqId = q.reqId });
+    try conn.expectClose();
+}
+
+test "option chain parameters are collected per exchange" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    var server = try FakeServer.listen(io);
+    defer server.deinit(io);
+    var script = try io.concurrent(serveOptionChain, .{&server});
+    defer script.cancel(io) catch {};
+
+    const c = try Client.connect(io, gpa, .{ .port = server.port });
+    {
+        defer c.close();
+        var chain = try c.optionChainParams(gpa, .{ .symbol = "AAPL", .con_id = 265598 }, .{});
+        defer chain.deinit();
+        try testing.expectEqual(@as(usize, 2), chain.items.len);
+        const smart = chain.items[0];
+        try testing.expectEqualStrings("SMART", smart.exchange.?);
+        try testing.expectEqualStrings("100", smart.multiplier.?);
+        try testing.expectEqualStrings("20261218", smart.expirations.items[2]);
+        try testing.expectEqual(@as(f64, 200), smart.strikes.items[4]);
+        try testing.expectEqualStrings("CBOE", chain.items[1].exchange.?);
     }
     try script.await(io);
 }

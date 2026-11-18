@@ -80,7 +80,7 @@ Messages that belong to no request (informational errors etc.) are read with
 
 ## Guides
 
-- [Looking up contracts](docs/en/contracts.md)
+- [Looking up contracts and option chains](docs/en/contracts.md)
 - [Wire protocol](docs/en/protocol.md)
 
 ## Examples
@@ -90,6 +90,7 @@ zig build examples
 export IBAPI_HOST=127.0.0.1 IBAPI_PORT=7497 IBAPI_CLIENT_ID=1   # defaults
 ./zig-out/bin/connect
 ./zig-out/bin/contracts details AAPL
+./zig-out/bin/option_chain AAPL 45
 ```
 
 ## License

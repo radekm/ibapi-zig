@@ -62,13 +62,49 @@ for (matches.items()) |m| { ... m.contract, m.derivativeSecTypes ... }
 Vzor se porovnává se začátkem symbolů a s názvy firem. TWS vrátí nejvýše
 několik desítek výsledků.
 
-## Ukázkový program
+## Opční řetězce
 
-`examples/contracts.zig`:
+`optionChainParams` vrátí pro každou burzu a obchodní třídu opcí na dané
+podkladové aktivum multiplikátor, všechny expirace a všechny strikes. I pro
+symboly s tisíci opcí je to jedna krátká odpověď.
+
+```zig
+var chain = try client.optionChainParams(gpa, .{ .symbol = "AAPL", .con_id = 265598 }, .{});
+defer chain.deinit();
+for (chain.items) |p| {
+    // p.exchange, p.tradingClass, p.multiplier,
+    // p.expirations.items ([]const u8, YYYYMMDD), p.strikes.items (f64)
+}
+```
+
+`con_id` podkladového aktiva je povinné; získáte ho z `contractDetails`.
+Pro indexy a futures nastavte `.sec_type = .index` / `.future`. Některá
+podkladová aktiva mají víc obchodních tříd, např. `SPX` (měsíční) a `SPXW`
+(týdenní).
+
+**Strikes jsou sjednocení přes všechny expirace** — konkrétní expirace nemusí
+mít každý strike. Skutečné strikes jedné expirace zjistíte dotazem na její
+kontrakty; u akciových opcí stačí cally:
+
+```zig
+var calls = try client.contractDetails(gpa,
+    Query.option("AAPL", "USD", "20261218", null, .call), .{ .timeout = .fromSeconds(30) });
+defer calls.deinit();
+// calls.items[i].contract.?.strike, .conId
+```
+
+TWS neumí filtrovat podle rozsahu dat. Chcete-li třeba expirace do 45 dnů,
+vezměte expirace z `optionChainParams`, vyberte potřebné a pro každou se
+zeptejte na detaily kontraktů. Přesně to ukazuje `examples/option_chain.zig`.
+
+## Ukázkové programy
+
+`examples/contracts.zig` a `examples/option_chain.zig`:
 
 ```sh
 zig build examples
 ./zig-out/bin/contracts search apple
 ./zig-out/bin/contracts details AAPL
 ./zig-out/bin/contracts details AAPL OPT USD 20261218
+./zig-out/bin/option_chain AAPL 45
 ```

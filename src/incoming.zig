@@ -20,6 +20,8 @@ pub const Incoming = union(enum) {
     bond_contract_data: proto.ContractData,
     contract_data_end: proto.ContractDataEnd,
     symbol_samples: proto.SymbolSamples,
+    sec_def_opt_parameter: proto.SecDefOptParameter,
+    sec_def_opt_parameter_end: proto.SecDefOptParameterEnd,
     /// A message this version of the library does not decode.
     other: Other,
 

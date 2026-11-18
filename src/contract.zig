@@ -159,6 +159,18 @@ pub const Query = struct {
     }
 };
 
+/// The underlying of an option chain, for `Client.optionChainParams`.
+pub const Underlying = struct {
+    /// Symbol of the underlying, e.g. "AAPL" or "SPX".
+    symbol: []const u8,
+    /// Security type of the underlying: stock, index or future.
+    sec_type: SecType = .stock,
+    /// IB contract id of the underlying (from `Client.contractDetails`); required by TWS.
+    con_id: i32,
+    /// For options on futures: the exchange of the options. Null for all exchanges.
+    fut_fop_exchange: ?[]const u8 = null,
+};
+
 const testing = std.testing;
 
 test "security type codes round-trip" {

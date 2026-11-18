@@ -61,13 +61,50 @@ for (matches.items()) |m| { ... m.contract, m.derivativeSecTypes ... }
 The pattern is matched against the beginning of symbols and against company
 names. TWS returns at most a few dozen matches.
 
-## Example program
+## Option chains
 
-`examples/contracts.zig`:
+`optionChainParams` returns, for each exchange and trading class of the
+options on an underlying, the multiplier, all expirations and all strikes.
+It is one short answer even for symbols with thousands of options.
+
+```zig
+var chain = try client.optionChainParams(gpa, .{ .symbol = "AAPL", .con_id = 265598 }, .{});
+defer chain.deinit();
+for (chain.items) |p| {
+    // p.exchange, p.tradingClass, p.multiplier,
+    // p.expirations.items ([]const u8, YYYYMMDD), p.strikes.items (f64)
+}
+```
+
+The underlying's `con_id` is required; get it from `contractDetails`.
+For indices and futures set `.sec_type = .index` / `.future`. Some
+underlyings have several trading classes, e.g. `SPX` (monthly) and `SPXW`
+(weeklies).
+
+**The strikes are the union over all expirations** — a particular expiration
+does not have to offer every strike. To get the real strikes of one
+expiration, ask for its contracts; calls are enough for stock options:
+
+```zig
+var calls = try client.contractDetails(gpa,
+    Query.option("AAPL", "USD", "20261218", null, .call), .{ .timeout = .fromSeconds(30) });
+defer calls.deinit();
+// calls.items[i].contract.?.strike, .conId
+```
+
+TWS cannot filter by a range of dates. To work with, say, expirations within
+45 days, take the expirations from `optionChainParams`, choose the ones you
+need and ask for contract details of each of them.
+`examples/option_chain.zig` shows exactly this.
+
+## Example programs
+
+`examples/contracts.zig` and `examples/option_chain.zig`:
 
 ```sh
 zig build examples
 ./zig-out/bin/contracts search apple
 ./zig-out/bin/contracts details AAPL
 ./zig-out/bin/contracts details AAPL OPT USD 20261218
+./zig-out/bin/option_chain AAPL 45
 ```
