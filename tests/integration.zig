@@ -3,7 +3,8 @@
 //!
 //! Connection: IBAPI_HOST (default 127.0.0.1), IBAPI_PORT (default 7497) and
 //! IBAPI_CLIENT_ID (default 17). The test refuses to run unless every
-//! managed account is a paper account (ids starting with "D").
+//! managed account id starts with "D", as paper accounts do (DU…, DF…).
+//! IB does not document this prefix; it is a safety net, not a guarantee.
 //!
 //! Only read-only requests are sent. Steps that need market data
 //! subscriptions are reported as skipped when TWS rejects them.
@@ -55,7 +56,8 @@ pub fn main(init: std.process.Init) !void {
     if (r.failed > 0) return error.IntegrationTestFailed;
 }
 
-/// Paper accounts have ids starting with "D" (e.g. DU…, DF…).
+/// Paper accounts have ids starting with "D" (e.g. DU…, DF…). IB does not
+/// document this, so it is only a safety net against a live login.
 fn requirePaperAccounts(accounts: []const u8) !void {
     var it = std.mem.tokenizeScalar(u8, accounts, ',');
     var any = false;

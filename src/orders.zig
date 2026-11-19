@@ -130,9 +130,11 @@ pub const Order = struct {
     }
 
     /// Permanent id assigned by TWS; unique across clients and sessions.
+    /// Returned as TWS sent it (from the order, else from the status update).
     pub fn permId(o: *const Order) ?i64 {
-        if (o.status) |s| if (nonZero(i64, s.permId)) |id| return id;
-        return nonZero(i64, o.order.permId);
+        if (o.order.permId) |id| return id;
+        if (o.status) |s| return s.permId;
+        return null;
     }
 
     /// Id of the API client that placed the order (0 also for TWS orders).
@@ -141,10 +143,12 @@ pub const Order = struct {
         return o.order.clientId;
     }
 
-    /// Order id of the parent order (bracket orders), if any.
+    /// Order id of the parent order (bracket orders), as TWS sent it (from
+    /// the order, else from the status update).
     pub fn parentId(o: *const Order) ?i32 {
-        if (o.status) |s| if (nonZero(i32, s.parentId)) |id| return id;
-        return nonZero(i32, o.order.parentId);
+        if (o.order.parentId) |id| return id;
+        if (o.status) |s| return s.parentId;
+        return null;
     }
 
     /// Account the order belongs to.
@@ -194,22 +198,27 @@ pub const Order = struct {
     /// Average price of the fills so far (from the latest status update).
     pub fn avgFillPrice(o: *const Order) ?f64 {
         const s = o.status orelse return null;
-        return price(s.avgFillPrice);
+        return s.avgFillPrice;
     }
 
     /// Limit price (limit orders).
     pub fn limitPrice(o: *const Order) ?f64 {
-        return price(o.order.lmtPrice);
+        return o.order.lmtPrice;
     }
 
     /// Auxiliary price: the stop price of stop orders, the trailing amount of
     /// trailing orders.
     pub fn auxPrice(o: *const Order) ?f64 {
-        return price(o.order.auxPrice);
+        return o.order.auxPrice;
     }
 
     /// Whether `s` is a status update of this order: same permanent id, or,
     /// when the permanent id is unknown, the same order id and client id.
+    ///
+    /// Here an id of 0 counts as unknown. This is not documented by IB (0 is
+    /// only the default value in IB's clients), but without it distinct
+    /// orders that both carry 0 (e.g. orders entered in TWS have order id 0)
+    /// would be merged into one.
     fn matches(o: *const Order, s: proto.OrderStatus) bool {
         if (nonZero(i64, s.permId)) |status_perm| {
             if (nonZero(i64, o.order.permId)) |perm| return perm == status_perm;
@@ -221,7 +230,8 @@ pub const Order = struct {
         return a == b;
     }
 
-    /// Whether both describe the same order.
+    /// Whether both describe the same order. Ids of 0 count as unknown, as in
+    /// `matches`.
     fn sameOrder(a: *const Order, b: *const Order) bool {
         if (nonZero(i64, a.order.permId)) |pa| {
             if (nonZero(i64, b.order.permId)) |pb| return pa == pb;
@@ -297,12 +307,7 @@ pub const Builder = struct {
     }
 };
 
-/// TWS sends the largest double for prices that are not set.
-fn price(value: ?f64) ?f64 {
-    const v = value orelse return null;
-    return if (v == std.math.floatMax(f64)) null else v;
-}
-
+/// Treats 0 as an unknown id; used only for matching (see `Order.matches`).
 fn nonZero(comptime T: type, value: ?T) ?T {
     const v = value orelse return null;
     return if (v == 0) null else v;
@@ -340,7 +345,7 @@ test "statuses are attached to their orders in any message order" {
     try b.addOrder(try Order.fromOpenOrder(gpa, .{
         .orderId = 7,
         .contract = .{ .conId = 265598, .symbol = "AAPL", .secType = "STK" },
-        .order = .{ .clientId = 1, .orderId = 7, .action = "BUY", .totalQuantity = "100", .orderType = "LMT", .lmtPrice = 180, .auxPrice = std.math.floatMax(f64), .tif = "DAY" },
+        .order = .{ .clientId = 1, .orderId = 7, .action = "BUY", .totalQuantity = "100", .orderType = "LMT", .lmtPrice = 180, .tif = "DAY" },
         .orderState = .{ .status = "PreSubmitted" },
     }));
     // Two TWS orders with order id 0, told apart by the permanent id.

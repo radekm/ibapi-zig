@@ -51,7 +51,9 @@ vycházejí:
 Každá varianta (`ibapi.market_data.OptionComputation`) má `implied_vol`,
 `delta`, `gamma`, `vega`, `theta`, `option_price`, `pv_dividend` (současná
 hodnota očekávaných dividend) a `underlying_price` (použitá cena podkladu).
-Hodnoty, které TWS spočítat nedokázalo, jsou `null`.
+Hodnoty, které TWS spočítat nedokázalo, jsou `null`: TWS je označuje
+hodnotou -1 (ceny, volatilita) nebo -2 (řecká písmena). Dokumentace IB tyto
+značky nepopisuje; knihovna se tu řídí referenčním C++ klientem od IB.
 
 ## Live nebo frozen data
 

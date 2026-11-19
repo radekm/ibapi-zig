@@ -29,8 +29,8 @@ zig build test-integration   # opt-in, needs a paper TWS / IB Gateway (see below
 `zig build test-integration` connects to a running TWS / IB Gateway
 (`IBAPI_HOST`, `IBAPI_PORT`, `IBAPI_CLIENT_ID`; defaults 127.0.0.1, 7497, 17),
 sends only read-only requests and prints the result of each step. It refuses
-to run unless every account of the login is a paper account (id starting
-with `D`). Steps that need a market data subscription are reported as skipped.
+to run unless every account id of the login starts with `D`, as paper
+accounts do (IB does not document this prefix, so it is only a safety net). Steps that need a market data subscription are reported as skipped.
 
 ## Protobuf messages
 

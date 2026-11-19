@@ -17,6 +17,7 @@ management comes later.
 | Branches | `main` only |
 | Concurrency | Asynchronous API on top of `std.Io` (futures, queues, groups) |
 | Dependencies | zig-protobuf only |
+| Special values | Interpret a value as "missing" or "special" only when IB's official documentation says so (e.g. tick price -1). Exceptions, each documented in the code: option computation -1/-2 (IB's reference C++ client does it), ids of 0 when merging orders (needed to keep distinct orders apart). No DBL_MAX handling. Absent protobuf fields are null. |
 
 ## Architecture
 
@@ -118,7 +119,7 @@ Owner's decisions: only snapshots, **never streaming subscriptions**; only
 - [x] `snapshot()` — snapshot request, ticks aggregated into `market_data.Quote` until
       `TickSnapshotEnd`: bid/ask/last + sizes, last time, open/high/low/close, volume,
       option model computations (bid/ask/last/model: IV, greeks, PV dividend, underlying price)
-- [x] TWS "not computed" sentinels (-1/-2) mapped to null
+- [x] TWS "not computed" sentinels (-1/-2) mapped to null (follows IB's reference client, not documented)
 - [x] Errors: 354 → `error.RequestRejected`; 10090/10167 are warnings; cancel on timeout;
       `Options.snapshot_timeout` (15 s, TWS needs up to ~11 s)
 - [x] Example `examples/quote.zig`, guide `docs/{en,cs}/prices.md`

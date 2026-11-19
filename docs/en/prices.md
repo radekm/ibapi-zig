@@ -51,7 +51,9 @@ differ in the option price they start from:
 Each variant (`ibapi.market_data.OptionComputation`) has `implied_vol`,
 `delta`, `gamma`, `vega`, `theta`, `option_price`, `pv_dividend` (present
 value of expected dividends) and `underlying_price` (the price of the
-underlying used). Values TWS could not compute are `null`.
+underlying used). Values TWS could not compute are `null`: TWS marks them
+with -1 (prices, volatility) or -2 (greeks). IB's documentation does not
+describe these markers; the library follows IB's reference C++ client here.
 
 ## Live or frozen data
 

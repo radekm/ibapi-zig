@@ -29,7 +29,8 @@ pub const MarketDataType = enum(i32) {
 };
 
 /// Values computed by the TWS option model for one source price.
-/// Each field is null when TWS did not compute it.
+/// Each field is null when TWS did not send it or marked it as not computed
+/// (-1 for prices and volatility, -2 for greeks; see `fromProto`).
 pub const OptionComputation = struct {
     implied_vol: ?f64 = null,
     delta: ?f64 = null,
@@ -44,8 +45,10 @@ pub const OptionComputation = struct {
     underlying_price: ?f64 = null,
 
     fn fromProto(m: proto.TickOptionComputation) OptionComputation {
-        // TWS marks values it did not compute with -1 (prices, volatility)
-        // or -2 (greeks).
+        // -1 (prices, volatility) and -2 (greeks) mean "not computed". This
+        // is not in IB's documentation; it follows IB's reference C++ client
+        // (EDecoder::processTickOptionComputationMsgProtoBuf), which treats
+        // these values the same way.
         return .{
             .implied_vol = unless(m.impliedVol, -1),
             .delta = unless(m.delta, -2),
