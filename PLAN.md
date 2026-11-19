@@ -143,6 +143,10 @@ application closes the client and connects again (documented).
 - [x] Pacing in `Client.send`: at most `Options.max_messages_per_second` (50) in
       any one-second window (`Pacer`); a wait longer than `write_timeout` fails
       with `error.Timeout` before anything is written
+      Owner's decision: pacing stays client-side only; the `+PACEAPI` connect
+      option (TWS-side pacing) is not sent. TWS may still reject or pace by
+      its own API setting; the real limit is market data lines / 2 per second
+      (50 by default), hence the option is configurable
 - [x] API docs (`zig build docs`), README usage guide
 - [x] `docs/{en,cs}/api.md`: every client method with the protobuf messages it
       sends and receives, error and notice routing, limits
