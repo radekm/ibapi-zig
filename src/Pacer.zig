@@ -17,9 +17,16 @@ pub const window: Io.Duration = .fromSeconds(1);
 
 /// Messages allowed per window; 0 disables pacing.
 limit: u8,
-/// Send times of the last `count` messages, oldest at `head`.
+/// Ring buffer with the send times of the last `count` messages. Only the
+/// first `limit` slots are used; the rest stay unused.
 times: [max_limit]Io.Timestamp = undefined,
+/// Index of the oldest entry in `times`. Stays 0 while the buffer fills up;
+/// once it is full, `record` overwrites the oldest entry and moves `head`
+/// to the next one, which becomes the oldest.
 head: usize = 0,
+/// Number of valid entries in `times`. Grows up to `limit` and then stays
+/// there; entries are never removed, only overwritten. Old entries need no
+/// removal: `delay` only compares the oldest one with the current time.
 count: usize = 0,
 
 /// Creates a pacer allowing `limit` messages per second (0 = unlimited).
