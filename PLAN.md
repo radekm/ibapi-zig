@@ -194,6 +194,10 @@ few months). Typical requests are small, so there is no pause between chunks.
 - [x] `Options.historical_timeout` (60 s) per request sent to TWS (one chunk);
       `CancelHistoricalData` on timeout or cancelation
 - [x] Example `examples/bars.zig`, guide `docs/{en,cs}/history.md`, `api.md`
+- [x] Integration test must pass on a paper account **without paid market
+      data** (owner's decision): snapshot and bars are required for EUR.USD
+      (forex needs no subscription per IB docs; bars from MIDPOINT), the same
+      steps for AAPL are skipped when TWS rejects them
 - [ ] Check against a real paper TWS: boundary bars of `endDateTime`, text of
       the "no data" error, whether `D` durations count calendar or trading days
 

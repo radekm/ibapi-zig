@@ -31,6 +31,9 @@ defer days.deinit();
 
 Stejně jako u `snapshot` je potřeba předplatné tržních dat pro daný
 kontrakt; bez něj TWS požadavek odmítne (`error.RequestRejected`).
+Forex a kryptoměny předplatné nepotřebují; forex nemá obchody, takže pro
+měnové páry použijte `.what_to_show = .midpoint` (nebo `.bid`, `.ask`),
+např. `Query.forex("EUR", "USD")`.
 
 ## Které svíčky se vrátí
 

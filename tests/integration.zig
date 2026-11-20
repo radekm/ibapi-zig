@@ -6,8 +6,11 @@
 //! managed account id starts with "D", as paper accounts do (DU…, DF…).
 //! IB does not document this prefix; it is a safety net, not a guarantee.
 //!
-//! Only read-only requests are sent. Steps that need market data
-//! subscriptions are reported as skipped when TWS rejects them.
+//! Only read-only requests are sent. Prices and bars are requested for
+//! EUR.USD, whose data IB provides without any market data subscription, so
+//! these steps must pass on a paper account without paid data. The same
+//! requests for AAPL need a subscription and are reported as skipped when
+//! TWS rejects them.
 
 const std = @import("std");
 const ibapi = @import("ibapi");
@@ -15,6 +18,17 @@ const Client = ibapi.Client;
 const Query = ibapi.contract.Query;
 
 const Outcome = enum { ok, skipped, failed };
+
+/// Whether a step may be skipped when TWS rejects it (missing market data
+/// subscription) or must succeed.
+const Need = enum {
+    optional,
+    required,
+
+    fn rejected(n: Need) Outcome {
+        return if (n == .optional) .skipped else .failed;
+    }
+};
 
 const Runner = struct {
     io: std.Io,
@@ -47,9 +61,16 @@ pub fn main(init: std.process.Init) !void {
     searchSymbols(&r);
     if (con_id) |id| {
         optionChain(&r, id);
-        snapshot(&r, id);
-        historicalBars(&r, id);
+        const aapl = Query.byConId(id, "SMART");
+        snapshot(&r, "AAPL", aapl, .optional);
+        historicalBars(&r, "AAPL", aapl, .trades, .optional);
     }
+    // Forex data needs no subscription (IB: "Forex and Cryptocurrencies do
+    // not require any additional market data subscriptions"); forex has no
+    // trades, so bars are built from midpoints.
+    const eurusd = Query.forex("EUR", "USD");
+    snapshot(&r, "EUR.USD", eurusd, .required);
+    historicalBars(&r, "EUR.USD", eurusd, .midpoint, .required);
     openOrders(&r);
     completedOrders(&r);
 
@@ -144,13 +165,15 @@ fn optionChain(r: *Runner, con_id: i32) void {
     r.report("contractDetails options", if (calls.items.len > 0) .ok else .failed, "{s}: {d} calls", .{ expiry, calls.items.len });
 }
 
-fn snapshot(r: *Runner, con_id: i32) void {
+fn snapshot(r: *Runner, label: []const u8, query: Query, need: Need) void {
+    var name_buf: [64]u8 = undefined;
+    const name = std.fmt.bufPrint(&name_buf, "snapshot {s}", .{label}) catch "snapshot";
     var diag: Client.Diagnostics = .{};
-    const q = r.client.snapshot(Query.byConId(con_id, "SMART"), .{ .diagnostics = &diag }) catch |err| switch (err) {
-        error.RequestRejected => return r.report("snapshot", .skipped, "TWS error {d}: {s}", .{ diag.code, diag.message() }),
-        else => return r.report("snapshot", .failed, "{t}", .{err}),
+    const q = r.client.snapshot(query, .{ .diagnostics = &diag }) catch |err| switch (err) {
+        error.RequestRejected => return r.report(name, need.rejected(), "TWS error {d}: {s}", .{ diag.code, diag.message() }),
+        else => return r.report(name, .failed, "{t}", .{err}),
     };
-    r.report("snapshot", .ok, "{s} bid {?d} ask {?d} last {?d} close {?d}", .{ if (q.data_type) |t| t.name() else "?", q.bid, q.ask, q.last, q.close });
+    r.report(name, .ok, "{s} bid {?d} ask {?d} last {?d} close {?d}", .{ if (q.data_type) |t| t.name() else "?", q.bid, q.ask, q.last, q.close });
 }
 
 fn openOrders(r: *Runner) void {
@@ -176,21 +199,28 @@ fn printBarTime(label: []const u8, t: std.Io.Timestamp) void {
 
 /// Minute bars of the last 2 hours and of the last 3 days (several
 /// requests), daily bars of the last 30 days. Prints the boundary bars, so
-/// that the handling of `endDateTime` can be checked (open question in PLAN.md).
-fn historicalBars(r: *Runner, con_id: i32) void {
+/// that the handling of `endDateTime` can be checked (open question in
+/// PLAN.md). The last 2 hours may have no bars (weekend, closed market);
+/// 3 days of minutes and 30 days must have some.
+fn historicalBars(r: *Runner, label: []const u8, query: Query, what: ibapi.history.WhatToShow, need: Need) void {
     const history = ibapi.history;
-    const query = Query.byConId(con_id, "SMART");
     const now = std.Io.Timestamp.now(r.io, .real);
     var diag: Client.Diagnostics = .{};
+    var name_buf: [64]u8 = undefined;
 
-    for ([_]struct { []const u8, i64 }{ .{ "minuteBars 2 h", 2 * 3600 }, .{ "minuteBars 3 days", 3 * 86400 } }) |step| {
-        var bars = r.client.minuteBars(r.gpa, query, .{ .start = now.subDuration(.fromSeconds(step[1])), .use_rth = false }, .{ .diagnostics = &diag }) catch |err| switch (err) {
+    for ([_]struct { []const u8, i64, bool }{ .{ "2 h", 2 * 3600, false }, .{ "3 days", 3 * 86400, true } }) |step| {
+        const name = std.fmt.bufPrint(&name_buf, "minuteBars {s} {s}", .{ label, step[0] }) catch "minuteBars";
+        var bars = r.client.minuteBars(r.gpa, query, .{
+            .start = now.subDuration(.fromSeconds(step[1])),
+            .what_to_show = what,
+            .use_rth = false,
+        }, .{ .diagnostics = &diag }) catch |err| switch (err) {
             error.RequestRejected => {
-                r.report(step[0], .skipped, "TWS error {d}: {s}", .{ diag.code, diag.message() });
+                r.report(name, need.rejected(), "TWS error {d}: {s}", .{ diag.code, diag.message() });
                 continue;
             },
             else => {
-                r.report(step[0], .failed, "{t}", .{err});
+                r.report(name, .failed, "{t}", .{err});
                 continue;
             },
         };
@@ -199,14 +229,19 @@ fn historicalBars(r: *Runner, con_id: i32) void {
             printBarTime("first", bars.items[0].time);
             printBarTime("last ", bars.items[bars.items.len - 1].time);
         }
-        r.report(step[0], .ok, "{d} bars", .{bars.items.len});
+        const ok = bars.items.len > 0 or !step[2];
+        r.report(name, if (ok) .ok else .failed, "{d} bars", .{bars.items.len});
     }
 
+    const name = std.fmt.bufPrint(&name_buf, "dailyBars {s} 30 days", .{label}) catch "dailyBars";
     const today = @divFloor(history.floorSeconds(now), std.time.s_per_day);
-    var days = r.client.dailyBars(r.gpa, query, .{ .first = .{ .day = @intCast(today - 30) } }, .{ .diagnostics = &diag }) catch |err| switch (err) {
-        error.RequestRejected => return r.report("dailyBars 30 days", .skipped, "TWS error {d}: {s}", .{ diag.code, diag.message() }),
-        else => return r.report("dailyBars 30 days", .failed, "{t}", .{err}),
+    var days = r.client.dailyBars(r.gpa, query, .{
+        .first = .{ .day = @intCast(today - 30) },
+        .what_to_show = what,
+    }, .{ .diagnostics = &diag }) catch |err| switch (err) {
+        error.RequestRejected => return r.report(name, need.rejected(), "TWS error {d}: {s}", .{ diag.code, diag.message() }),
+        else => return r.report(name, .failed, "{t}", .{err}),
     };
     defer days.deinit();
-    r.report("dailyBars 30 days", if (days.items.len > 0) .ok else .failed, "{d} bars", .{days.items.len});
+    r.report(name, if (days.items.len > 0) .ok else .failed, "{d} bars", .{days.items.len});
 }

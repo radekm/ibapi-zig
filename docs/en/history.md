@@ -31,6 +31,9 @@ defer days.deinit();
 
 A market data subscription for the contract is required, as for
 `snapshot`; without it TWS rejects the request (`error.RequestRejected`).
+Forex and crypto need no subscription; forex has no trades, so use
+`.what_to_show = .midpoint` (or `.bid`, `.ask`) for currency pairs, e.g.
+`Query.forex("EUR", "USD")`.
 
 ## Which bars are returned
 
