@@ -615,7 +615,9 @@ pub fn snapshot(c: *Client, query: contract.Query, opts: RequestOptions) Request
         .contract = query.toProto(),
         .snapshot = true,
     });
-    return c.collectQuote(&r, opts.diagnostics) catch |err| {
+    var seen: SeenKinds = .empty;
+    return c.collectQuote(&r, opts.diagnostics, &seen) catch |err| {
+        if (err == error.Timeout) logSeen(req_id, "snapshot", seen);
         if (err == error.Timeout or err == error.Canceled) {
             c.sendCancel(.cancel_mkt_data, proto.CancelMarketData{ .reqId = req_id });
         }
@@ -874,11 +876,24 @@ fn collectBars(c: *Client, gpa: Allocator, r: *Responses, diag: *Diagnostics, co
     }
 }
 
-fn collectQuote(c: *Client, r: *Responses, diagnostics: ?*Diagnostics) RequestError!market_data.Quote {
+/// Kinds of messages a request received; logged when it times out, to
+/// show how far TWS got.
+const SeenKinds = std.EnumSet(std.meta.Tag(Incoming));
+
+fn logSeen(req_id: i32, what: []const u8, seen: SeenKinds) void {
+    var buf: [256]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var it = seen.iterator();
+    while (it.next()) |tag| w.print(" {t}", .{tag}) catch break;
+    log.debug("{s} request {d} timed out; received:{s}", .{ what, req_id, if (seen.count() == 0) " nothing" else w.buffered() });
+}
+
+fn collectQuote(c: *Client, r: *Responses, diagnostics: ?*Diagnostics, seen: *SeenKinds) RequestError!market_data.Quote {
     var q: market_data.Quote = .{};
     while (try c.nextResponse(r, diagnostics)) |msg| {
         var m = msg;
         defer m.deinit(c.gpa);
+        seen.insert(m);
         switch (m) {
             .tick_price => |t| market_data.applyPrice(&q, t),
             .tick_size => |t| market_data.applySize(&q, t),

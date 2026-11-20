@@ -235,9 +235,13 @@ few months). Typical requests are small, so there is no pause between chunks.
 - TWS 10.52 servers (226) send `CompletedOrder` fields 31, 36 and 37 that
   the 10.52.01 `.proto` files do not define; zig-protobuf skips them (debug
   log). Regenerate from newer `.proto` files when IB publishes them.
-- A snapshot without market data permissions (EUR.USD, no forex
-  permissions) got no answer at all and ended with `error.Timeout`, not a
-  rejection. Check whether TWS sends something we do not route.
+- A snapshot without a market data subscription or permissions got no
+  answer and ended with `error.Timeout` instead of a rejection: EUR.USD (no
+  forex permissions, 14:10 UTC) and AAPL during US trading hours (16:31 UTC);
+  before the open (14:10 UTC) AAPL was rejected with 354. A timed-out
+  snapshot now logs (debug) which message kinds it received, and the
+  integration test lists the notices that arrived during the run. Find out
+  what TWS sends (if anything) and handle it.
 - Order updates that arrive while `openOrders` waits are consumed by it (and
   lost if it times out) instead of going to the notices.
 - `ErrorMessage.id` is an order id for order-related errors; such an error

@@ -69,6 +69,11 @@ pub fn main(init: std.process.Init) !void {
     openOrders(&r);
     completedOrders(&r);
 
+    // Messages that belong to no waiting request (e.g. late answers, or
+    // what TWS sends instead of answering a request that timed out).
+    const late = printNotices(&r, .fromMilliseconds(500));
+    r.report("notices during the test", .ok, "{d} (listed above)", .{late});
+
     std.debug.print("{d} failed, {d} notices dropped\n", .{ r.failed, client.droppedNotices() });
     if (r.failed > 0) return error.IntegrationTestFailed;
 }
@@ -91,19 +96,26 @@ fn requirePaperAccounts(accounts: []const u8) !void {
 /// Records what TWS sends on its own right after connecting (open question
 /// in PLAN.md: does it send open orders and OpenOrderEnd unasked?).
 fn unsolicitedAfterConnect(r: *Runner) void {
+    const count = printNotices(r, .fromSeconds(2));
+    r.report("notices after connect", .ok, "{d} (listed above)", .{count});
+}
+
+/// Prints the notices that arrive until none comes for `quiet`; returns
+/// their number.
+fn printNotices(r: *Runner, quiet: std.Io.Duration) usize {
     var count: usize = 0;
     while (true) {
-        var msg = (r.client.nextNotice(.{ .duration = .{ .raw = .fromSeconds(2), .clock = .awake } }) catch break) orelse break;
+        var msg = (r.client.nextNotice(.{ .duration = .{ .raw = quiet, .clock = .awake } }) catch break) orelse break;
         defer msg.deinit(r.gpa);
         count += 1;
         const id = msg.msgId();
         const name = std.enums.tagName(ibapi.wire.InMsg, id) orelse "?";
         switch (msg) {
-            .error_message => |e| std.debug.print("  notice {s}: {?d} {s}\n", .{ name, e.errorCode, e.errorMsg orelse "" }),
-            else => std.debug.print("  notice {s} ({d})\n", .{ name, @backingInt(id) }),
+            .error_message => |e| std.debug.print("  notice {s} (id {?d}): {?d} {s}\n", .{ name, e.id, e.errorCode, e.errorMsg orelse "" }),
+            else => std.debug.print("  notice {s} ({d}), request {?d}\n", .{ name, @backingInt(id), msg.requestId() }),
         }
     }
-    r.report("notices after connect", .ok, "{d} (listed above)", .{count});
+    return count;
 }
 
 fn currentTime(r: *Runner) void {
