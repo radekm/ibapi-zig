@@ -71,6 +71,8 @@ for (done.items) |*o| {
 Returns orders that were filled, cancelled or rejected (as far as TWS keeps
 them, usually the current day). Their `status` is `null`; the final state is
 in `state.status`, `state.completedTime` and `state.completedStatus`.
+TWS sends `0` as the total quantity of completed orders (seen with a filled
+order on a paper account); the executed quantity is in `filledQuantity()`.
 `.api_only = true` leaves out orders entered in TWS.
 
 ## Updates after the request

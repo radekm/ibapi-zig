@@ -178,7 +178,8 @@ pub const Order = struct {
         return .unknown;
     }
 
-    /// Ordered quantity.
+    /// Ordered quantity. For completed orders TWS sends 0 here (seen on a
+    /// paper account with a filled order); use `filledQuantity` for them.
     pub fn totalQuantity(o: *const Order) ?f64 {
         return parseDecimal(o.order.totalQuantity);
     }

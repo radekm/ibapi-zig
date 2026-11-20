@@ -71,6 +71,9 @@ for (done.items) |*o| {
 Vrací příkazy, které byly vyplněny, zrušeny nebo odmítnuty (pokud je TWS
 ještě drží, obvykle za aktuální den). Jejich `status` je `null`; konečný stav
 je ve `state.status`, `state.completedTime` a `state.completedStatus`.
+Celkové množství dokončených příkazů posílá TWS jako `0` (pozorováno
+u vyplněného příkazu na paper účtu); provedené množství je ve
+`filledQuantity()`.
 `.api_only = true` vynechá příkazy zadané v TWS.
 
 ## Aktualizace po požadavku

@@ -262,10 +262,12 @@ few months). Typical requests are small, so there is no pause between chunks.
 - `ErrorMessage.id` is an order id for order-related errors; such an error
   could be misrouted to a pending request with the same request id. Not an
   issue while the library places no orders; revisit before the order phase.
-- How does TWS encode unset decimal quantities (`Order.totalQuantity`,
-  `OrderStatus.filled`, tick sizes) in protobuf: empty/absent, or a huge
-  sentinel number? `parseDecimal` treats only empty/absent as unset. The
-  integration test prints the raw quantities and the prices that do not
-  apply to the order type, so the next paper run with an order shows it.
+- Unset values in orders (paper run 2026-11-20, an open and a completed
+  NVDA LMT order): no huge sentinel numbers. Inapplicable prices are absent
+  (trailStopPrice, percentOffset, minQty → null) or 0 (auxPrice,
+  avgFillPrice, lastFillPrice, mktCapPrice); quantities not filled yet are
+  "0". Completed orders have totalQuantity "0" and the executed quantity in
+  filledQuantity (documented). Tick sizes are still unchecked (needs a
+  market data subscription).
 - Warning codes: only 2100–2199 are treated as non-terminal for requests so far;
   extend in M4 (e.g. 10167 delayed market data) when market data needs it.
