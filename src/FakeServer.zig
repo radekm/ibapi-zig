@@ -57,6 +57,9 @@ pub const Conn = struct {
     frame: std.ArrayList(u8),
     /// Market data type selected by the client during the handshake.
     market_data_type: i32 = 0,
+    /// Send ManagedAccounts after NextValidId in `handshake`, as TWS
+    /// sometimes does.
+    accounts_after_next_valid_id: bool = false,
 
     /// A request received from the client.
     pub const Request = struct {
@@ -109,13 +112,15 @@ pub const Conn = struct {
         defer start.deinit(conn.gpa);
         try std.testing.expectEqual(@as(?i32, client_id), start.clientId);
 
-        try conn.send(.managed_accounts, proto.ManagedAccounts{ .accountsList = "DU0000001" });
+        // TWS sends ManagedAccounts and NextValidId in either order.
+        if (!conn.accounts_after_next_valid_id) try conn.send(.managed_accounts, proto.ManagedAccounts{ .accountsList = "DU0000001" });
         try conn.send(.error_message, proto.ErrorMessage{
             .id = -1,
             .errorCode = 2104,
             .errorMsg = "Market data farm connection is OK:usfarm",
         });
         try conn.send(.next_valid_id, proto.NextValidId{ .orderId = 1 });
+        if (conn.accounts_after_next_valid_id) try conn.send(.managed_accounts, proto.ManagedAccounts{ .accountsList = "DU0000001" });
 
         // The client selects the market data type right after connecting.
         const mdt = try conn.readRequest();

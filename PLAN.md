@@ -161,6 +161,10 @@ application closes the client and connects again (documented).
       `.?` on server data, duplicate request ids, reader blocked without a
       timeout on a full request buffer, requests kept busy past their deadline,
       cancel messages not sent from canceled tasks, large stack buffers
+- [x] Handshake waits for both `NextValidId` and `ManagedAccounts`: the
+      owner's paper TWS (server version 226) sent `NextValidId` first, the
+      accounts went to the notices and the integration test failed with
+      `NoManagedAccounts`
 - [ ] Run the integration test against a real paper TWS / IB Gateway (owner) and
       resolve the open questions below
 

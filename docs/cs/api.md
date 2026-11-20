@@ -15,7 +15,7 @@ server, např. `python3 -m http.server -d zig-out/docs`).
 
 | Metoda | Posílá | Přijímá |
 | --- | --- | --- |
-| `connect` | textové hello `API\0` + rozsah verzí; `StartApiRequest` (71); `MarketDataTypeRequest` (59) | textové hello serveru (verze, čas); `ManagedAccounts` (15); `NextValidId` (9) — ukončí handshake; cokoli jiného před ním jde do notices |
+| `connect` | textové hello `API\0` + rozsah verzí; `StartApiRequest` (71); `MarketDataTypeRequest` (59) | textové hello serveru (verze, čas); `ManagedAccounts` (15); `NextValidId` (9) — handshake skončí, až dorazí ona i `ManagedAccounts`, v libovolném pořadí; cokoli jiného do té doby jde do notices |
 | `close` | — (zavře socket) | — |
 | `serverVersion`, `connectionTime`, `managedAccounts`, `nextOrderId` | — (hodnoty z handshaku; `nextOrderId` aktualizuje každé `NextValidId`) | — |
 | `nextNotice` | — | jakákoli zpráva, na kterou nečeká žádný požadavek (viz [Notices](#notices)) |

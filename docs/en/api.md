@@ -16,7 +16,7 @@ The full API reference is generated from the doc comments by `zig build docs`
 
 | Method | Sends | Receives |
 | --- | --- | --- |
-| `connect` | text hello `API\0` + version range; `StartApiRequest` (71); `MarketDataTypeRequest` (59) | text server hello (version, time); `ManagedAccounts` (15); `NextValidId` (9) — ends the handshake; anything else before it goes to the notices |
+| `connect` | text hello `API\0` + version range; `StartApiRequest` (71); `MarketDataTypeRequest` (59) | text server hello (version, time); `ManagedAccounts` (15); `NextValidId` (9) — the handshake ends when both it and `ManagedAccounts` have arrived, in either order; anything else until then goes to the notices |
 | `close` | — (closes the socket) | — |
 | `serverVersion`, `connectionTime`, `managedAccounts`, `nextOrderId` | — (values from the handshake; `nextOrderId` is updated by every `NextValidId`) | — |
 | `nextNotice` | — | any message no request waits for (see [Notices](#notices)) |

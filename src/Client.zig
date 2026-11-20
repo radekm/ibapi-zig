@@ -312,7 +312,7 @@ pub fn connectionTime(c: *const Client) []const u8 {
 }
 
 /// Comma-separated list of accounts managed by this login, as sent during
-/// the handshake (may be empty).
+/// the handshake (`connect` waits for it; the list itself may be empty).
 pub fn managedAccounts(c: *const Client) []const u8 {
     return c.accounts;
 }
@@ -1018,7 +1018,10 @@ fn freeState(c: *Client) void {
     c.gpa.free(c.accounts);
 }
 
-/// Sends the hello and StartApi and reads messages until NextValidId.
+/// Sends the hello and StartApi and reads messages until both NextValidId
+/// and ManagedAccounts have arrived. TWS sends them in either order (seen
+/// with server version 226: NextValidId first), so stopping at NextValidId
+/// would lose the accounts to the notices.
 fn handshake(c: *Client, options: Options) ConnectError!void {
     const r = &c.transport.reader;
     const w = &c.transport.writer;
@@ -1047,7 +1050,9 @@ fn handshake(c: *Client, options: Options) ConnectError!void {
     // message right before it closes the connection.
     var last_error_buf: [256]u8 = undefined;
     var last_error: []const u8 = "no reason given";
-    while (true) {
+    var have_order_id = false;
+    var have_accounts = false;
+    while (!have_order_id or !have_accounts) {
         const msg = wire.readMessage(r, c.gpa, &c.frame) catch |err| switch (err) {
             error.EndOfStream => {
                 log.warn("connection rejected: {s}", .{last_error});
@@ -1063,13 +1068,14 @@ fn handshake(c: *Client, options: Options) ConnectError!void {
             .next_valid_id => |m| {
                 c.next_order_id.store(m.orderId orelse -1, .monotonic);
                 inc.deinit(c.gpa);
-                return;
+                have_order_id = true;
             },
             .managed_accounts => |m| {
                 c.gpa.free(c.accounts);
                 c.accounts = &.{};
                 c.accounts = try c.gpa.dupe(u8, m.accountsList orelse "");
                 inc.deinit(c.gpa);
+                have_accounts = true;
             },
             .error_message => |m| {
                 last_error = std.fmt.bufPrint(&last_error_buf, "error {?d}: {s}", .{
@@ -1278,6 +1284,30 @@ test "connect performs the handshake and answers requests" {
         var notice = (try c.nextNotice(seconds(5))).?;
         defer notice.deinit(testing.allocator);
         try testing.expectEqual(@as(?i32, 2104), notice.error_message.errorCode);
+    }
+    try script.await(io);
+}
+
+fn serveAccountsLast(server: *FakeServer) !void {
+    const conn = try server.accept(testing.io, testing.allocator);
+    defer conn.deinit();
+    conn.accounts_after_next_valid_id = true;
+    try conn.handshake(0);
+    try conn.expectClose();
+}
+
+test "connect waits for the accounts sent after NextValidId" {
+    const io = testing.io;
+    var server = try FakeServer.listen(io);
+    defer server.deinit(io);
+    var script = try io.concurrent(serveAccountsLast, .{&server});
+    defer script.cancel(io) catch {};
+
+    const c = try Client.connect(io, testing.allocator, .{ .port = server.port });
+    {
+        defer c.close();
+        try testing.expectEqualStrings("DU0000001", c.managedAccounts());
+        try testing.expectEqual(@as(i32, 1), c.nextOrderId());
     }
     try script.await(io);
 }
