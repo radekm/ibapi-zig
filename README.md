@@ -27,8 +27,9 @@ zig build test-integration   # opt-in, needs a paper TWS / IB Gateway (see below
 
 ### Integration test
 
-`zig build test-integration` connects to a running TWS / IB Gateway
-(`IBAPI_HOST`, `IBAPI_PORT`, `IBAPI_CLIENT_ID`; defaults 127.0.0.1, 7497, 17),
+`zig build test-integration` connects to a running TWS / IB Gateway using
+`Config.zon` in the current working directory, like the examples (see
+[Examples](#examples)),
 sends only read-only requests and prints the result of each step. It refuses
 to run unless every account id of the login starts with `D`, as paper
 accounts do (IB does not document this prefix, so it is only a safety net). Prices and bars are

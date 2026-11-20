@@ -152,8 +152,10 @@ application closes the client and connects again (documented).
 - [x] `docs/{en,cs}/api.md`: every client method with the protobuf messages it
       sends and receives, error and notice routing, limits
 - [x] Opt-in integration test `zig build test-integration` (`tests/integration.zig`,
-      compiled by `zig build test`): refuses non-paper logins (account ids not
-      starting with `D`), read-only steps, lists what TWS sends unasked after connecting
+      compiled by `zig build test`): connection from `Config.zon` in the current
+      directory (shared with the examples via the `common` module), refuses
+      non-paper logins (account ids not starting with `D`), read-only steps,
+      lists what TWS sends unasked after connecting
 - [x] Review for undefined behaviour and liveness (see the commit "Fix issues
       found in the review"): unnamed enum values printed with `@tagName`,
       `.?` on server data, duplicate request ids, reader blocked without a

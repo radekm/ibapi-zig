@@ -55,13 +55,15 @@ pub fn build(b: *std.Build) !void {
         examples_step.dependOn(&install.step);
         test_step.dependOn(&exe.step);
     }
-    // Tests of the shared example code (e.g. that Config.example.zon parses).
-    const example_tests = b.addTest(.{ .root_module = b.createModule(.{
+    // Code shared by the examples and the integration test (Config.zon).
+    const common_mod = b.createModule(.{
         .root_source_file = b.path("examples/common.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{.{ .name = "ibapi", .module = ibapi_mod }},
-    }) });
+    });
+    // Tests of the shared example code (e.g. that Config.example.zon parses).
+    const example_tests = b.addTest(.{ .root_module = common_mod });
     test_step.dependOn(&b.addRunArtifact(example_tests).step);
 
     // Opt-in test against a paper TWS / IB Gateway. `zig build test` only
@@ -72,11 +74,14 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path("tests/integration.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "ibapi", .module = ibapi_mod }},
+            .imports = &.{
+                .{ .name = "ibapi", .module = ibapi_mod },
+                .{ .name = "common", .module = common_mod },
+            },
         }),
     });
     test_step.dependOn(&integration.step);
-    const integration_step = b.step("test-integration", "Run the integration test against a paper TWS (IBAPI_HOST, IBAPI_PORT, IBAPI_CLIENT_ID)");
+    const integration_step = b.step("test-integration", "Run the integration test against a paper TWS (Config.zon in the current directory)");
     const run_integration = b.addRunArtifact(integration);
     run_integration.has_side_effects = true;
     integration_step.dependOn(&run_integration.step);

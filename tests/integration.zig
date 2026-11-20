@@ -1,8 +1,8 @@
 //! Opt-in integration test against a running TWS / IB Gateway logged in to
 //! a **paper trading** account: `zig build test-integration`.
 //!
-//! Connection: IBAPI_HOST (default 127.0.0.1), IBAPI_PORT (default 7497) and
-//! IBAPI_CLIENT_ID (default 17). The test refuses to run unless every
+//! Connection: `Config.zon` in the current working directory, as for the
+//! examples (see examples/Config.example.zon). The test refuses to run unless every
 //! managed account id starts with "D", as paper accounts do (DU…, DF…).
 //! IB does not document this prefix; it is a safety net, not a guarantee.
 //!
@@ -14,6 +14,7 @@
 
 const std = @import("std");
 const ibapi = @import("ibapi");
+const common = @import("common");
 const Client = ibapi.Client;
 const Query = ibapi.contract.Query;
 
@@ -43,12 +44,7 @@ const Runner = struct {
 };
 
 pub fn main(init: std.process.Init) !void {
-    const env = init.environ_map;
-    const host = env.get("IBAPI_HOST") orelse "127.0.0.1";
-    const port = if (env.get("IBAPI_PORT")) |p| try std.fmt.parseInt(u16, p, 10) else 7497;
-    const client_id = if (env.get("IBAPI_CLIENT_ID")) |id| try std.fmt.parseInt(i32, id, 10) else 17;
-
-    const client = try Client.connect(init.io, init.gpa, .{ .host = host, .port = port, .client_id = client_id });
+    const client = try common.connectFromConfig(init);
     defer client.close();
     std.debug.print("connected: server version {d}, time {s}\n", .{ client.serverVersion(), client.connectionTime() });
 

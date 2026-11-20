@@ -27,8 +27,9 @@ zig build test-integration   # volitelné, potřebuje paper TWS / IB Gateway (vi
 
 ### Integrační test
 
-`zig build test-integration` se připojí k běžícímu TWS / IB Gateway
-(`IBAPI_HOST`, `IBAPI_PORT`, `IBAPI_CLIENT_ID`; výchozí 127.0.0.1, 7497, 17),
+`zig build test-integration` se připojí k běžícímu TWS / IB Gateway podle
+`Config.zon` v aktuálním pracovním adresáři, stejně jako příklady (viz
+[Příklady](#příklady)),
 posílá jen požadavky, které nic nemění, a vypíše výsledek každého kroku.
 Odmítne běžet, pokud id některého účtu přihlášení nezačíná na `D` jako
 u paper účtů (IB tento prefix nedokumentuje, takže jde jen o pojistku). Ceny a svíčky

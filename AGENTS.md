@@ -89,7 +89,8 @@ These rules apply to every contributor, human or AI agent. Read this file and
   tests against an in-process **fake TWS server** that replays recorded frames.
 - New message support = encoder/decoder tests + at least one fake-server test.
 - `zig build test-integration` (opt-in) needs a running paper TWS / Gateway;
-  host and port come from env vars `IBAPI_HOST`, `IBAPI_PORT`, `IBAPI_CLIENT_ID`.
+  the connection comes from `Config.zon` in the current working directory
+  (as for the examples; template `examples/Config.example.zon`, ignored by git).
 
 ## Workflow
 

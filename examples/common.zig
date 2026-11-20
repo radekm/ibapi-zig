@@ -1,4 +1,4 @@
-//! Helpers shared by the example programs.
+//! Helpers shared by the example programs and the integration test.
 
 const std = @import("std");
 const ibapi = @import("ibapi");
@@ -6,8 +6,9 @@ const ibapi = @import("ibapi");
 /// Name of the configuration file, looked up in the current working directory.
 pub const config_path = "Config.zon";
 
-/// Connection settings read from `Config.zon`. See `examples/Config.example.zon`. All fields are required, so that the examples never
-/// connect to an unintended TWS (e.g. a live instead of a paper account).
+/// Connection settings read from `Config.zon`. See `examples/Config.example.zon`.
+/// All fields are required, so that the programs never connect to an
+/// unintended TWS (e.g. a live instead of a paper account).
 pub const Config = struct {
     /// Host name or IP address of TWS / IB Gateway.
     host: []const u8,
