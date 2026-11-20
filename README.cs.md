@@ -32,10 +32,10 @@ zig build test-integration   # volitelné, potřebuje paper TWS / IB Gateway (vi
 [Příklady](#příklady)),
 posílá jen požadavky, které nic nemění, a vypíše výsledek každého kroku.
 Odmítne běžet, pokud id některého účtu přihlášení nezačíná na `D` jako
-u paper účtů (IB tento prefix nedokumentuje, takže jde jen o pojistku). Ceny a svíčky
-se žádají pro EUR.USD, jehož data IB poskytuje bez předplatného tržních dat,
-takže test projde i na paper účtu bez placených dat; stejné kroky pro AAPL
-předplatné potřebují a při odmítnutí z TWS se hlásí jako přeskočené.
+u paper účtů (IB tento prefix nedokumentuje, takže jde jen o pojistku). Projde i na paper
+účtu bez placených tržních dat: historické svíčky AAPL jsou povinné (bez
+předplatného je TWS vrací zhruba o 15 minut zpožděné), snapshot AAPL
+a svíčky EUR.USD se při odmítnutí z TWS hlásí jako přeskočené.
 
 ## Protobuf zprávy
 

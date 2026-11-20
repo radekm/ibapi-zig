@@ -29,11 +29,14 @@ var days = try client.dailyBars(gpa, Query.stock("AAPL", "USD"), .{
 defer days.deinit();
 ```
 
-A market data subscription for the contract is required, as for
-`snapshot`; without it TWS rejects the request (`error.RequestRejected`).
-Forex and crypto need no subscription; forex has no trades, so use
-`.what_to_show = .midpoint` (or `.bid`, `.ask`) for currency pairs, e.g.
-`Query.forex("EUR", "USD")`.
+Without a market data subscription TWS may still return bars, but only up
+to about 15 minutes ago, with warning 2188 ("Up-to-the-second historical data
+requires additional subscription"; seen on a paper account for US stocks);
+the warning is only logged. Where data is not available at all, TWS rejects
+the request (`error.RequestRejected`, e.g. 162 "No market data permissions").
+Forex data is free, but only for accounts with forex trading permissions.
+Forex has no trades, so use `.what_to_show = .midpoint` (or `.bid`, `.ask`)
+for currency pairs, e.g. `Query.forex("EUR", "USD")`.
 
 ## Which bars are returned
 

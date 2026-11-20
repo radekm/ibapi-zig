@@ -6,11 +6,12 @@
 //! managed account id starts with "D", as paper accounts do (DU…, DF…).
 //! IB does not document this prefix; it is a safety net, not a guarantee.
 //!
-//! Only read-only requests are sent. Prices and bars are requested for
-//! EUR.USD, whose data IB provides without any market data subscription, so
-//! these steps must pass on a paper account without paid data. The same
-//! requests for AAPL need a subscription and are reported as skipped when
-//! TWS rejects them.
+//! Only read-only requests are sent. The test must pass on a paper account
+//! without paid market data: historical bars of AAPL are required (without
+//! a subscription TWS returns them delayed, with warning 2188), the AAPL
+//! snapshot and the EUR.USD bars are reported as skipped when TWS rejects
+//! them (a snapshot needs a subscription; free forex data needs forex
+//! trading permissions).
 
 const std = @import("std");
 const ibapi = @import("ibapi");
@@ -59,14 +60,12 @@ pub fn main(init: std.process.Init) !void {
         optionChain(&r, id);
         const aapl = Query.byConId(id, "SMART");
         snapshot(&r, "AAPL", aapl, .optional);
-        historicalBars(&r, "AAPL", aapl, .trades, .optional);
+        historicalBars(&r, "AAPL", aapl, .trades, .required);
     }
-    // Forex data needs no subscription (IB: "Forex and Cryptocurrencies do
-    // not require any additional market data subscriptions"); forex has no
-    // trades, so bars are built from midpoints.
-    const eurusd = Query.forex("EUR", "USD");
-    snapshot(&r, "EUR.USD", eurusd, .required);
-    historicalBars(&r, "EUR.USD", eurusd, .midpoint, .required);
+    // Forex has no trades, so bars are built from midpoints. No snapshot:
+    // without forex permissions TWS did not answer it at all (timeout)
+    // instead of rejecting it.
+    historicalBars(&r, "EUR.USD", Query.forex("EUR", "USD"), .midpoint, .optional);
     openOrders(&r);
     completedOrders(&r);
 

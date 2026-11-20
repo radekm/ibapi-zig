@@ -32,11 +32,11 @@ zig build test-integration   # opt-in, needs a paper TWS / IB Gateway (see below
 [Examples](#examples)),
 sends only read-only requests and prints the result of each step. It refuses
 to run unless every account id of the login starts with `D`, as paper
-accounts do (IB does not document this prefix, so it is only a safety net). Prices and bars are
-requested for EUR.USD, whose data IB provides without any market data
-subscription, so the test passes on a paper account without paid data; the
-same steps for AAPL need a subscription and are reported as skipped when TWS
-rejects them.
+accounts do (IB does not document this prefix, so it is only a safety net). It passes on a paper
+account without paid market data: historical bars of AAPL are required
+(without a subscription TWS returns them delayed by about 15 minutes), the
+AAPL snapshot and the EUR.USD bars are reported as skipped when TWS rejects
+them.
 
 ## Protobuf messages
 

@@ -201,9 +201,12 @@ few months). Typical requests are small, so there is no pause between chunks.
       `CancelHistoricalData` on timeout or cancelation
 - [x] Example `examples/bars.zig`, guide `docs/{en,cs}/history.md`, `api.md`
 - [x] Integration test must pass on a paper account **without paid market
-      data** (owner's decision): snapshot and bars are required for EUR.USD
-      (forex needs no subscription per IB docs; bars from MIDPOINT), the same
-      steps for AAPL are skipped when TWS rejects them
+      data** (owner's decision): AAPL bars are required (TWS returns them
+      ~15 min delayed with warning 2188 without a subscription); the AAPL
+      snapshot (354 not subscribed) and the EUR.USD bars (162 "No market data
+      permissions for IDEALPRO CASH": free forex data needs forex trading
+      permissions) are skipped when rejected. No EUR.USD snapshot: without
+      permissions TWS did not answer it at all (timeout)
 - [ ] Check against a real paper TWS: boundary bars of `endDateTime`, text of
       the "no data" error, whether `D` durations count calendar or trading days
 
@@ -226,7 +229,15 @@ few months). Typical requests are small, so there is no pause between chunks.
   Replace with `ConnectOptions.timeout` once Zig implements it.
 - Does TWS send open orders (and `OpenOrderEnd`?) on its own right after a
   client connects? An unsolicited `OpenOrderEnd` arriving while `openOrders`
-  waits would end it early with a partial list. Check against real TWS.
+  waits would end it early with a partial list. First paper run (server 226,
+  no open orders): only 2104/2106/2158 farm notices arrived; recheck with
+  open orders.
+- TWS 10.52 servers (226) send `CompletedOrder` fields 31, 36 and 37 that
+  the 10.52.01 `.proto` files do not define; zig-protobuf skips them (debug
+  log). Regenerate from newer `.proto` files when IB publishes them.
+- A snapshot without market data permissions (EUR.USD, no forex
+  permissions) got no answer at all and ended with `error.Timeout`, not a
+  rejection. Check whether TWS sends something we do not route.
 - Order updates that arrive while `openOrders` waits are consumed by it (and
   lost if it times out) instead of going to the notices.
 - `ErrorMessage.id` is an order id for order-related errors; such an error

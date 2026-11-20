@@ -29,11 +29,15 @@ var days = try client.dailyBars(gpa, Query.stock("AAPL", "USD"), .{
 defer days.deinit();
 ```
 
-Stejně jako u `snapshot` je potřeba předplatné tržních dat pro daný
-kontrakt; bez něj TWS požadavek odmítne (`error.RequestRejected`).
-Forex a kryptoměny předplatné nepotřebují; forex nemá obchody, takže pro
-měnové páry použijte `.what_to_show = .midpoint` (nebo `.bid`, `.ask`),
-např. `Query.forex("EUR", "USD")`.
+I bez předplatného tržních dat může TWS svíčky vrátit, ale jen zhruba do
+doby před 15 minutami a s varováním 2188 („Up-to-the-second historical data
+requires additional subscription“; pozorováno na paper účtu u amerických
+akcií); varování se jen zaloguje. Když data nejsou dostupná vůbec, TWS
+požadavek odmítne (`error.RequestRejected`, např. 162 „No market data
+permissions“). Forexová data jsou zdarma, ale jen pro účty s povolením
+obchodovat forex. Forex nemá obchody, takže pro měnové páry použijte
+`.what_to_show = .midpoint` (nebo `.bid`, `.ask`), např.
+`Query.forex("EUR", "USD")`.
 
 ## Které svíčky se vrátí
 
