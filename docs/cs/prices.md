@@ -69,7 +69,9 @@ chyba TWS 354. TWS může místo toho přejít na zpožděná data (varování 2
 nebo 10167, případně zpožděný typ dat; pozorováno na paper účtu během
 amerických obchodních hodin). Knihovna zpožděná data nikdy nepřijímá, takže
 i to skončí s `error.RequestRejected`: s kódem 2186 / 10167 a jeho textem,
-nebo s kódem 0 a zprávou, která typ dat pojmenuje. Chyba 10090 (část dat
+nebo s kódem 0 a zprávou, která typ dat pojmenuje. TWS i tak pošle celý
+zpožděný snapshot; knihovna ho nejdřív (v rámci časového limitu) dočte
+a zahodí, takže zpožděná data se nedostanou ani do notices. Chyba 10090 (část dat
 není předplacená) je jen varování a snapshot neukončí.
 
 ## Časové limity

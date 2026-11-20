@@ -69,7 +69,9 @@ error 354 in the diagnostics. TWS may instead switch to delayed data
 (warning 2186 or 10167, or a delayed data type; seen on a paper account
 during US trading hours). The library never accepts delayed data, so this
 also ends with `error.RequestRejected`: with code 2186 / 10167 and its text,
-or with code 0 and a message naming the data type. Error 10090 (part of the
+or with code 0 and a message naming the data type. TWS still sends the
+whole delayed snapshot; the library reads and drops it first (within the
+time limit), so delayed data never reach the notices either. Error 10090 (part of the
 data not subscribed) is only a warning and does not end the snapshot.
 
 ## Time limits

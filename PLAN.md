@@ -247,7 +247,9 @@ few months). Typical requests are small, so there is no pause between chunks.
   data type 3 (delayed) although the client asks for frozen. Owner's
   decision: delayed data end a snapshot with `error.RequestRejected`
   (2186 and 10167 are no longer warnings; a delayed data type is rejected
-  with code 0).
+  with code 0). The third run showed that TWS still sends the whole delayed
+  snapshot after 2186; it went to the notices, so the snapshot now reads
+  and drops it (until `TickSnapshotEnd` or the deadline) before failing.
 - Order updates that arrive while `openOrders` waits are consumed by it (and
   lost if it times out) instead of going to the notices.
 - `ErrorMessage.id` is an order id for order-related errors; such an error

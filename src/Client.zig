@@ -615,7 +615,9 @@ pub fn searchSymbols(c: *Client, gpa: Allocator, pattern: []const u8, opts: Requ
 /// data subscription for the contract TWS rejects the request (error 354)
 /// with `error.RequestRejected`. TWS may instead switch to delayed data
 /// (warning 2186 or 10167, or a delayed market data type); the library never
-/// accepts delayed data, so that also ends with `error.RequestRejected`. The default limit is
+/// accepts delayed data, so that also ends with `error.RequestRejected`;
+/// the delayed snapshot TWS still sends is read and dropped first (within
+/// the limit), so that it does not reach the notices. The default limit is
 /// `Options.snapshot_timeout`; on timeout the request is cancelled.
 /// Several snapshots may run concurrently (`io.async`), within the TWS
 /// limit of simultaneous market data lines (usually 100).
@@ -633,12 +635,33 @@ pub fn snapshot(c: *Client, query: contract.Query, opts: RequestOptions) Request
         .snapshot = true,
     });
     var seen: SeenKinds = .empty;
-    return c.collectQuote(&r, opts.diagnostics, &seen) catch |err| {
-        if (err == error.Timeout) logSeen(req_id, "snapshot", seen);
-        if (err == error.Timeout or err == error.Canceled) {
+    var diag: Diagnostics = .{};
+    return c.collectQuote(&r, &diag, &seen) catch |err| switch (err) {
+        error.DelayedData => {
+            if (opts.diagnostics) |d| d.* = diag;
+            // TWS still sends the whole delayed snapshot; drop it here so
+            // that delayed data never reach the notices.
+            while (r.next() catch |e| {
+                if (e == error.Timeout or e == error.Canceled) {
+                    c.sendCancel(.cancel_mkt_data, proto.CancelMarketData{ .reqId = req_id });
+                }
+                return error.RequestRejected;
+            }) |msg| {
+                var m = msg;
+                m.deinit(c.gpa);
+            }
+            return error.RequestRejected;
+        },
+        error.RequestRejected => {
+            if (opts.diagnostics) |d| d.* = diag;
+            return error.RequestRejected;
+        },
+        error.Timeout, error.Canceled => |e| {
+            if (e == error.Timeout) logSeen(req_id, "snapshot", seen);
             c.sendCancel(.cancel_mkt_data, proto.CancelMarketData{ .reqId = req_id });
-        }
-        return err;
+            return e;
+        },
+        else => |e| return @errorCast(e),
     };
 }
 
@@ -905,9 +928,15 @@ fn logSeen(req_id: i32, what: []const u8, seen: SeenKinds) void {
     log.debug("{s} request {d} timed out; received:{s}", .{ what, req_id, if (seen.count() == 0) " nothing" else w.buffered() });
 }
 
-fn collectQuote(c: *Client, r: *Responses, diagnostics: ?*Diagnostics, seen: *SeenKinds) RequestError!market_data.Quote {
+/// Reads a snapshot. `error.DelayedData` means TWS switched to delayed data
+/// (warning 2186 / 10167 or a delayed market data type); `diagnostics` says how.
+fn collectQuote(c: *Client, r: *Responses, diagnostics: *Diagnostics, seen: *SeenKinds) (RequestError || error{DelayedData})!market_data.Quote {
     var q: market_data.Quote = .{};
-    while (try c.nextResponse(r, diagnostics)) |msg| {
+    while (c.nextResponse(r, diagnostics) catch |err| {
+        if (err == error.RequestRejected and
+            (diagnostics.code == delayed_data_code or diagnostics.code == delayed_data_displayed_code)) return error.DelayedData;
+        return err;
+    }) |msg| {
         var m = msg;
         defer m.deinit(c.gpa);
         seen.insert(m);
@@ -920,8 +949,8 @@ fn collectQuote(c: *Client, r: *Responses, diagnostics: ?*Diagnostics, seen: *Se
                 const v = t.marketDataType orelse continue;
                 const data_type: market_data.MarketDataType = @fromBackingInt(@intCast(v));
                 if (data_type != .live and data_type != .frozen) {
-                    if (diagnostics) |d| d.setText(0, "TWS sent market data of type {d} ({s}); only live and frozen data are accepted", .{ v, data_type.name() });
-                    return error.RequestRejected;
+                    diagnostics.setText(0, "TWS sent market data of type {d} ({s}); only live and frozen data are accepted", .{ v, data_type.name() });
+                    return error.DelayedData;
                 }
                 q.data_type = data_type;
             },
@@ -1843,6 +1872,15 @@ test "snapshots of stocks and options, rejections and timeouts" {
         try testing.expectError(error.RequestRejected, c.snapshot(contract.Query.byConId(4, "SMART"), .{ .diagnostics = &diag }));
         try testing.expectEqual(@as(i32, 0), diag.code);
         try testing.expectEqualStrings("TWS sent market data of type 4 (delayed_frozen); only live and frozen data are accepted", diag.message());
+        // The rest of both delayed snapshots was dropped, not passed to the notices.
+        while (true) {
+            var n = (c.nextNotice(.{ .duration = .{ .raw = millis(100), .clock = .awake } }) catch |err| switch (err) {
+                error.Timeout => break,
+                else => return err,
+            }) orelse break;
+            defer n.deinit(gpa);
+            try testing.expect(n == .error_message);
+        }
 
         try testing.expectError(error.Timeout, c.snapshot(contract.Query.byConId(2, "SMART"), .{ .timeout = millis(100) }));
     }
