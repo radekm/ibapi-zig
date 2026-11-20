@@ -27,6 +27,9 @@ pub const market_data = @import("market_data.zig");
 /// Orders as reported by TWS (`Client.openOrders`, `Client.completedOrders`).
 pub const orders = @import("orders.zig");
 
+/// Historical bars (`Client.minuteBars`, `Client.dailyBars`).
+pub const history = @import("history.zig");
+
 /// A decoded message received from the server.
 pub const Incoming = @import("incoming.zig").Incoming;
 

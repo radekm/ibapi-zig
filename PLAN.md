@@ -162,6 +162,41 @@ application closes the client and connects again (documented).
 - [ ] Run the integration test against a real paper TWS / IB Gateway (owner) and
       resolve the open questions below
 
+### M7 — Historical bars (OHLC)
+Owner's decisions: only **1 min** and **1 day** bars (the application
+aggregates larger bars itself); **never `keepUpToDate`** (it is a
+subscription), so `HistoricalDataUpdate` is not decoded; no
+`reqHeadTimestamp` (it falls under the strict small-bar pacing rules and must
+be cancelled; not needed for the intended use: minutes of one day, days of a
+few months). Typical requests are small, so there is no pause between chunks.
+- [x] `wire`/`Incoming`: `HistoricalDataRequest` (20), `CancelHistoricalData` (25),
+      `HistoricalData` (17), `HistoricalDataEnd` (108)
+- [x] `history`: `MinuteBar` (`time: Io.Timestamp`, start of the bar, UTC) and
+      `DailyBar` (`day: std.time.epoch.EpochDay`, the exchange's trading day);
+      OHLC as `?f64`, volume and WAP decimal strings parsed to `?f64`
+      (empty = null; no other special values), bar count `?i32`; `history.day(y, m, d)`
+- [x] `minuteBars(gpa, query, .{ start, end, what_to_show, use_rth })`: bars whose
+      start lies in `[start, end)`; `end = null` means now (the unfinished
+      current bar may be included). Sent with `formatDate = 2` (epoch seconds)
+      and `endDateTime` as UTC `YYYYMMDD-HH:mm:ss`; durations in seconds,
+      at least 60 S, at most 86400 S per request; longer ranges are split and
+      walked backwards from the end (next end = earliest bar received)
+- [x] `dailyBars(gpa, query, .{ first, last, … })`: bars of days `first..last`
+      (both inclusive, `last = null` means today); one request, `N D` up to
+      365 days, else `N Y`; dates `yyyyMMdd`
+- [x] `what_to_show`: trades (default), midpoint, bid, ask, bid_ask (OHLC has a
+      special meaning, documented), adjusted_last, historical_volatility,
+      option_implied_volatility; `use_rth` default true
+- [x] Error 162 whose text says the query returned no data = no bars (empty
+      chunk); any other error → `error.RequestRejected`
+- [x] At most `Options.max_historical_requests` (50, the IB limit) historical
+      requests open at once; waiting for a slot is bounded by the request's deadline
+- [x] `Options.historical_timeout` (60 s) per request sent to TWS (one chunk);
+      `CancelHistoricalData` on timeout or cancelation
+- [x] Example `examples/bars.zig`, guide `docs/{en,cs}/history.md`, `api.md`
+- [ ] Check against a real paper TWS: boundary bars of `endDateTime`, text of
+      the "no data" error, whether `D` durations count calendar or trading days
+
 ### Later phases (not started)
 - Account: positions, account summary, PnL, executions
 - Orders: place, modify, cancel (requires explicit go-ahead; paper first)

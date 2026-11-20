@@ -31,6 +31,7 @@ const Pacer = @import("Pacer.zig");
 const contract = @import("contract.zig");
 const market_data = @import("market_data.zig");
 const orders = @import("orders.zig");
+const history = @import("history.zig");
 
 const log = std.log.scoped(.ibapi);
 
@@ -52,7 +53,14 @@ frame: std.ArrayList(u8),
 
 request_timeout: Io.Duration,
 snapshot_timeout: Io.Duration,
+historical_timeout: Io.Duration,
 write_timeout: Io.Duration,
+
+/// One token per historical data request that may be open at TWS; unused
+/// when `historical_limited` is false.
+historical_slot_buffer: [std.math.maxInt(u8)]void,
+historical_slots: Mailbox(void),
+historical_limited: bool,
 
 /// Serialises writers of whole frames.
 write_mutex: Io.Mutex,
@@ -127,12 +135,20 @@ pub const Options = struct {
     /// Default limit for `snapshot`. TWS may take up to about 11 seconds to
     /// complete a snapshot, so this is longer than `request_timeout`.
     snapshot_timeout: Io.Duration = .fromSeconds(15),
+    /// Default limit for one historical data request sent to TWS (one chunk
+    /// of `minuteBars`, or `dailyBars`), including waiting for a free slot
+    /// (`max_historical_requests`). TWS may slow down historical data
+    /// requests, so this is longer than `request_timeout`.
+    historical_timeout: Io.Duration = .fromSeconds(60),
     /// Limit for sending one message.
     write_timeout: Io.Duration = .fromSeconds(5),
     /// Most messages sent in any one second; further messages wait. TWS
     /// disconnects clients that exceed 50 messages per second. 0 disables
     /// the limit.
     max_messages_per_second: u8 = 50,
+    /// Most historical data requests open at TWS at the same time (IB allows
+    /// 50); further requests wait for a free slot. 0 disables the limit.
+    max_historical_requests: u8 = 50,
     /// Market data requested by `snapshot`. `.frozen` returns live data while
     /// the market is open and the last values when it is closed.
     market_data_type: market_data.MarketDataType = .frozen,
@@ -228,6 +244,10 @@ pub fn connect(io: Io, gpa: Allocator, options: Options) ConnectError!*Client {
         .frame = .empty,
         .request_timeout = options.request_timeout,
         .snapshot_timeout = options.snapshot_timeout,
+        .historical_timeout = options.historical_timeout,
+        .historical_slot_buffer = undefined,
+        .historical_slots = undefined,
+        .historical_limited = options.max_historical_requests > 0,
         .write_timeout = options.write_timeout,
         .write_mutex = .init,
         .pacer = .init(options.max_messages_per_second),
@@ -249,6 +269,10 @@ pub fn connect(io: Io, gpa: Allocator, options: Options) ConnectError!*Client {
     c.transport.init(io, stream, &c.read_buffer, &c.write_buffer);
     errdefer c.transport.close();
     c.notices = .init(&c.notice_buffer);
+    if (c.historical_limited) {
+        c.historical_slots = .init(c.historical_slot_buffer[0..options.max_historical_requests]);
+        for (0..options.max_historical_requests) |_| _ = c.historical_slots.tryPut(io, {});
+    }
     errdefer c.freeState();
 
     c.transport.read_timeout = deadline;
@@ -680,8 +704,175 @@ pub fn completedOrders(c: *Client, gpa: Allocator, opts: CompletedOrdersOptions)
     return .{ .gpa = gpa, .items = try items.toOwnedSlice(gpa) };
 }
 
+/// Returns the 1-minute bars of a contract whose start lies in
+/// `[params.start, params.end)`, oldest first. `params.end = null` means
+/// now; the current, unfinished bar may then be included. Free the result
+/// with `deinit`.
+///
+/// A range of up to one day is one request to TWS; a longer range is split
+/// into requests of one day each, sent one after another from the end.
+/// `opts.timeout` (default `Options.historical_timeout`) applies to each of
+/// them. Periods without data (nights, weekends, data older than IB keeps)
+/// give no bars rather than an error. A market data subscription for the
+/// contract is required, otherwise TWS rejects the request
+/// (`error.RequestRejected`).
+pub fn minuteBars(c: *Client, gpa: Allocator, query: contract.Query, params: history.MinuteBarsParams, opts: RequestOptions) RequestError!history.MinuteBars {
+    var items: std.ArrayList(history.MinuteBar) = .empty;
+    defer items.deinit(gpa);
+
+    const start = @max(history.floorSeconds(params.start), 0);
+    const end = history.ceilSeconds(params.end orelse Io.Timestamp.now(c.io, .real));
+    // `endDateTime` of the next request; null = now (an empty string).
+    var chunk_end: ?i64 = if (params.end != null) end else null;
+    var window_end = end;
+    while (window_end > start) {
+        const duration = std.math.clamp(window_end - start, history.min_minute_chunk_seconds, history.max_minute_chunk_seconds);
+        var end_buf: [17]u8 = undefined;
+        var duration_buf: [24]u8 = undefined;
+        try c.historicalRequest(gpa, history.MinuteBar, &items, .{
+            .contract = query.toProto(),
+            .endDateTime = if (chunk_end) |e| history.formatUtc(&end_buf, @intCast(e)) else "",
+            .duration = history.formatDuration(&duration_buf, @intCast(duration), 'S'),
+            .barSizeSetting = history.bar_size_minute,
+            .whatToShow = params.what_to_show.code(),
+            .useRTH = params.use_rth,
+            .formatDate = history.format_date_epoch,
+        }, opts);
+        const window_start = window_end - duration;
+        if (window_start <= start) break;
+        // Overlap by one bar, so that a bar at the boundary is not lost
+        // whichever request TWS puts it in; duplicates are removed below.
+        window_end = window_start + history.min_minute_chunk_seconds;
+        chunk_end = window_end;
+    }
+
+    const sorted = history.sortUnique(history.MinuteBar, items.items);
+    var kept: std.ArrayList(history.MinuteBar) = .empty;
+    errdefer kept.deinit(gpa);
+    for (sorted) |b| {
+        if (b.time.nanoseconds < params.start.nanoseconds) continue;
+        if (params.end) |e| if (b.time.nanoseconds >= e.nanoseconds) continue;
+        try kept.append(gpa, b);
+    }
+    return .{ .gpa = gpa, .items = try kept.toOwnedSlice(gpa) };
+}
+
+/// Returns the 1-day bars of a contract for trading days
+/// `params.first..params.last` (both inclusive), oldest first.
+/// `params.last = null` means today; today's unfinished bar may then be
+/// included. One request to TWS, limited by `opts.timeout` (default
+/// `Options.historical_timeout`). Days without data give no bars rather
+/// than an error. Free the result with `deinit`.
+pub fn dailyBars(c: *Client, gpa: Allocator, query: contract.Query, params: history.DailyBarsParams, opts: RequestOptions) RequestError!history.DailyBars {
+    var items: std.ArrayList(history.DailyBar) = .empty;
+    defer items.deinit(gpa);
+
+    const now = history.floorSeconds(Io.Timestamp.now(c.io, .real));
+    const today: u64 = @intCast(@divFloor(@max(now, 0), std.time.s_per_day));
+    const first: u64 = params.first.day;
+    const last: u64 = if (params.last) |l| l.day else today;
+    // Nothing to ask for when the range lies in the future.
+    if (first <= last and first <= today) {
+        // Day bars are dated by the exchange; ending the request two UTC
+        // days after `last` includes `last` in every time zone. Bars after
+        // `last` are dropped below. A request ending in the future is sent
+        // as ending now.
+        const request_end = last + 2;
+        const ends_now = params.last == null or request_end > today;
+        var end_buf: [17]u8 = undefined;
+        var duration_buf: [24]u8 = undefined;
+        try c.historicalRequest(gpa, history.DailyBar, &items, .{
+            .contract = query.toProto(),
+            .endDateTime = if (ends_now) "" else history.formatUtc(&end_buf, request_end * std.time.s_per_day),
+            .duration = history.dailyDuration(&duration_buf, (if (ends_now) today else request_end) - first + 1),
+            .barSizeSetting = history.bar_size_day,
+            .whatToShow = params.what_to_show.code(),
+            .useRTH = params.use_rth,
+            .formatDate = history.format_date_text,
+        }, opts);
+    }
+
+    const sorted = history.sortUnique(history.DailyBar, items.items);
+    var kept: std.ArrayList(history.DailyBar) = .empty;
+    errdefer kept.deinit(gpa);
+    for (sorted) |b| {
+        if (b.day.day < first or b.day.day > last) continue;
+        try kept.append(gpa, b);
+    }
+    return .{ .gpa = gpa, .items = try kept.toOwnedSlice(gpa) };
+}
+
 // ---------------------------------------------------------------------------
 // Internals
+
+/// Sends one historical data request (`keepUpToDate` is never set) and
+/// appends its bars, converted with `Bar.fromProto`, to `items`. An answer
+/// "no data" (error 162) adds nothing and is not an error. On timeout or
+/// cancelation the request is canceled at TWS.
+fn historicalRequest(
+    c: *Client,
+    gpa: Allocator,
+    comptime Bar: type,
+    items: *std.ArrayList(Bar),
+    request: proto.HistoricalDataRequest,
+    opts: RequestOptions,
+) RequestError!void {
+    const io = c.io;
+    const deadline = (Io.Timeout{ .duration = .{
+        .raw = opts.timeout orelse c.historical_timeout,
+        .clock = .awake,
+    } }).toDeadline(io);
+
+    if (c.historical_limited) {
+        c.historical_slots.get(io, deadline) catch |err| switch (err) {
+            error.Timeout => return error.Timeout,
+            error.Canceled => return error.Canceled,
+            error.Closed => return error.ConnectionClosed,
+        };
+    }
+    defer if (c.historical_limited) {
+        _ = c.historical_slots.tryPut(io, {});
+    };
+
+    const req_id = c.nextRequestId();
+    var buffer: [response_buffer_len]Incoming = undefined;
+    var r: Responses = undefined;
+    try c.register(&r, .{ .req_id = req_id }, .historical_data_end, &buffer, deadline);
+    defer r.deinit();
+
+    var msg = request;
+    msg.reqId = req_id;
+    try c.send(.req_historical_data, msg);
+
+    var diag: Diagnostics = .{};
+    c.collectBars(gpa, &r, &diag, Bar, items) catch |err| switch (err) {
+        error.RequestRejected => {
+            if (history.isNoData(diag.code, diag.message())) return;
+            if (opts.diagnostics) |d| d.* = diag;
+            return err;
+        },
+        error.Timeout, error.Canceled => {
+            c.sendCancel(.cancel_historical_data, proto.CancelHistoricalData{ .reqId = req_id });
+            return err;
+        },
+        else => return err,
+    };
+}
+
+fn collectBars(c: *Client, gpa: Allocator, r: *Responses, diag: *Diagnostics, comptime Bar: type, items: *std.ArrayList(Bar)) RequestError!void {
+    while (try c.nextResponse(r, diag)) |msg| {
+        var m = msg;
+        defer m.deinit(c.gpa);
+        switch (m) {
+            .historical_data => |d| {
+                try items.ensureUnusedCapacity(gpa, d.historicalDataBars.items.len);
+                for (d.historicalDataBars.items) |b| items.appendAssumeCapacity(try Bar.fromProto(b));
+            },
+            .historical_data_end => {},
+            else => return error.UnexpectedResponse,
+        }
+    }
+}
 
 fn collectQuote(c: *Client, r: *Responses, diagnostics: ?*Diagnostics) RequestError!market_data.Quote {
     var q: market_data.Quote = .{};

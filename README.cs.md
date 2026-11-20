@@ -6,7 +6,8 @@ Knihovna v jazyce Zig pro Interactive Brokers: komunikuje s Trader
 Workstation (TWS) nebo IB Gateway pomocí **protobuf** varianty TWS API.
 
 > **Stav:** raná fáze vývoje. Prvním cílem je přístup jen pro čtení:
-> vyhledání kontraktů, ceny akcií a opcí a seznam otevřených příkazů.
+> vyhledání kontraktů, ceny akcií a opcí, historické svíčky a seznam
+> otevřených příkazů.
 > Zadávání, úpravy a rušení příkazů přijdou později.
 > Viz [PLAN.md](PLAN.md).
 
@@ -96,8 +97,8 @@ Všechny metody klienta a zprávy, které si vyměňují s TWS, jsou v přehledu
 [Metody klienta a jejich zprávy](docs/cs/api.md).
 
 Každá operace má timeout: `connect_timeout`, `request_timeout`,
-`snapshot_timeout` a `write_timeout` v `ibapi.Client.Options`
-(výchozí 10 s, 10 s, 15 s a 5 s) a
+`snapshot_timeout`, `historical_timeout` a `write_timeout` v
+`ibapi.Client.Options` (výchozí 10 s, 10 s, 15 s, 60 s a 5 s) a
 `nextNotice` ho dostává explicitně. Vypršení se hlásí jako `error.Timeout`.
 Za sekundu se pošle nejvýš `max_messages_per_second` (50) zpráv.
 
@@ -114,6 +115,7 @@ přes `client.nextNotice(timeout)`.
 - [Metody klienta a jejich zprávy](docs/cs/api.md)
 - [Vyhledávání kontraktů a opčních řetězců](docs/cs/contracts.md)
 - [Ceny akcií a opcí](docs/cs/prices.md)
+- [Historické svíčky](docs/cs/history.md)
 - [Příkazy (jen čtení)](docs/cs/orders.md)
 - [Síťový protokol](docs/cs/protocol.md)
 
@@ -129,6 +131,8 @@ cp examples/Config.example.zon Config.zon   # pak upravte host, port, client_id
 ./zig-out/bin/contracts details AAPL
 ./zig-out/bin/option_chain AAPL 45
 ./zig-out/bin/quote AAPL 20261218 190 C
+./zig-out/bin/bars AAPL minutes 2
+./zig-out/bin/bars AAPL days 30
 ./zig-out/bin/orders
 ```
 

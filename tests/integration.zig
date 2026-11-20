@@ -48,6 +48,7 @@ pub fn main(init: std.process.Init) !void {
     if (con_id) |id| {
         optionChain(&r, id);
         snapshot(&r, id);
+        historicalBars(&r, id);
     }
     openOrders(&r);
     completedOrders(&r);
@@ -166,4 +167,46 @@ fn completedOrders(r: *Runner) void {
     var list = r.client.completedOrders(r.gpa, .{}) catch |err| return r.report("completedOrders", .failed, "{t}", .{err});
     defer list.deinit();
     r.report("completedOrders", .ok, "{d} orders", .{list.items.len});
+}
+
+fn printBarTime(label: []const u8, t: std.Io.Timestamp) void {
+    var buf: [17]u8 = undefined;
+    std.debug.print("  {s} {s} UTC\n", .{ label, ibapi.history.formatUtc(&buf, @intCast(ibapi.history.floorSeconds(t))) });
+}
+
+/// Minute bars of the last 2 hours and of the last 3 days (several
+/// requests), daily bars of the last 30 days. Prints the boundary bars, so
+/// that the handling of `endDateTime` can be checked (open question in PLAN.md).
+fn historicalBars(r: *Runner, con_id: i32) void {
+    const history = ibapi.history;
+    const query = Query.byConId(con_id, "SMART");
+    const now = std.Io.Timestamp.now(r.io, .real);
+    var diag: Client.Diagnostics = .{};
+
+    for ([_]struct { []const u8, i64 }{ .{ "minuteBars 2 h", 2 * 3600 }, .{ "minuteBars 3 days", 3 * 86400 } }) |step| {
+        var bars = r.client.minuteBars(r.gpa, query, .{ .start = now.subDuration(.fromSeconds(step[1])), .use_rth = false }, .{ .diagnostics = &diag }) catch |err| switch (err) {
+            error.RequestRejected => {
+                r.report(step[0], .skipped, "TWS error {d}: {s}", .{ diag.code, diag.message() });
+                continue;
+            },
+            else => {
+                r.report(step[0], .failed, "{t}", .{err});
+                continue;
+            },
+        };
+        defer bars.deinit();
+        if (bars.items.len > 0) {
+            printBarTime("first", bars.items[0].time);
+            printBarTime("last ", bars.items[bars.items.len - 1].time);
+        }
+        r.report(step[0], .ok, "{d} bars", .{bars.items.len});
+    }
+
+    const today = @divFloor(history.floorSeconds(now), std.time.s_per_day);
+    var days = r.client.dailyBars(r.gpa, query, .{ .first = .{ .day = @intCast(today - 30) } }, .{ .diagnostics = &diag }) catch |err| switch (err) {
+        error.RequestRejected => return r.report("dailyBars 30 days", .skipped, "TWS error {d}: {s}", .{ diag.code, diag.message() }),
+        else => return r.report("dailyBars 30 days", .failed, "{t}", .{err}),
+    };
+    defer days.deinit();
+    r.report("dailyBars 30 days", if (days.items.len > 0) .ok else .failed, "{d} bars", .{days.items.len});
 }

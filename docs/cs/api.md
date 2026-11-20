@@ -31,6 +31,7 @@ server, např. `python3 -m http.server -d zig-out/docs`).
 | `snapshot` | `MarketDataRequest` (1) se `snapshot = true`; při vypršení `CancelMarketData` (2) | `TickPrice` (1), `TickSize` (2), `TickString` (46), `TickGeneric` (45), `TickOptionComputation` (21), `TickReqParams` (81), `MarketDataType` (58), **`TickSnapshotEnd` (57)** | `reqId` |
 | `openOrders` | `AllOpenOrdersRequest` (16) | `OpenOrder` (5), `OrderStatus` (3), **`OpenOrdersEnd` (53)** | druh |
 | `completedOrders` | `CompletedOrdersRequest` (99) | `CompletedOrder` (101), **`CompletedOrdersEnd` (102)** | druh |
+| `minuteBars`, `dailyBars` | `HistoricalDataRequest` (20), jeden na každou část (viz [history.md](history.md)), nikdy s `keepUpToDate`; při vypršení `CancelHistoricalData` (25) | `HistoricalData` (17), **`HistoricalDataEnd` (108)**; chyba 162 „no data“ = žádné svíčky | `reqId` |
 
 *Směrování podle `reqId`*: odpovědi nesou id požadavku, takže takových
 požadavků může běžet současně libovolně mnoho. *Směrování podle druhu*:
@@ -73,7 +74,11 @@ je `droppedNotices()`.
 ## Limity
 
 - Každý požadavek má časový limit (`Options.request_timeout`, pro `snapshot`
-  `Options.snapshot_timeout`, nebo `.timeout` volání).
+  `Options.snapshot_timeout`, pro každý požadavek na historická data
+  `Options.historical_timeout`, nebo `.timeout` volání).
+- Najednou je otevřeno nejvýš `Options.max_historical_requests` (výchozí 50)
+  požadavků na historická data; další čekají na volné místo v rámci svého
+  limitu.
 - Klient pošle nejvýš `Options.max_messages_per_second` (výchozí 50) zpráv
   za sekundu; další zprávy počkají. Kdyby čekání přesáhlo
   `Options.write_timeout`, `send` skončí s `error.Timeout` a spojení se

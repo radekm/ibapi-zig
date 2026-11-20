@@ -32,6 +32,7 @@ The full API reference is generated from the doc comments by `zig build docs`
 | `snapshot` | `MarketDataRequest` (1) with `snapshot = true`; `CancelMarketData` (2) on timeout | `TickPrice` (1), `TickSize` (2), `TickString` (46), `TickGeneric` (45), `TickOptionComputation` (21), `TickReqParams` (81), `MarketDataType` (58), **`TickSnapshotEnd` (57)** | `reqId` |
 | `openOrders` | `AllOpenOrdersRequest` (16) | `OpenOrder` (5), `OrderStatus` (3), **`OpenOrdersEnd` (53)** | kind |
 | `completedOrders` | `CompletedOrdersRequest` (99) | `CompletedOrder` (101), **`CompletedOrdersEnd` (102)** | kind |
+| `minuteBars`, `dailyBars` | `HistoricalDataRequest` (20), one per chunk (see [history.md](history.md)), never with `keepUpToDate`; `CancelHistoricalData` (25) on timeout | `HistoricalData` (17), **`HistoricalDataEnd` (108)**; error 162 "no data" = no bars | `reqId` |
 
 *Routed by `reqId`*: the answers carry the request id, so any number of such
 requests can run at the same time. *Routed by kind*: the answers carry no
@@ -74,7 +75,11 @@ unread notices are kept; newer ones are dropped and counted by
 ## Limits
 
 - Every request has a time limit (`Options.request_timeout`, for `snapshot`
-  `Options.snapshot_timeout`, or `.timeout` of the call).
+  `Options.snapshot_timeout`, for each historical data request
+  `Options.historical_timeout`, or `.timeout` of the call).
+- At most `Options.max_historical_requests` (default 50) historical data
+  requests are open at once; further ones wait for a free slot within their
+  time limit.
 - The client sends at most `Options.max_messages_per_second` (default 50)
   messages per second; further messages wait. If the wait would exceed
   `Options.write_timeout`, `send` fails with `error.Timeout` without

@@ -35,6 +35,8 @@ pub const Incoming = union(enum) {
     open_order_end: proto.OpenOrdersEnd,
     completed_order: proto.CompletedOrder,
     completed_orders_end: proto.CompletedOrdersEnd,
+    historical_data: proto.HistoricalData,
+    historical_data_end: proto.HistoricalDataEnd,
     /// A message this version of the library does not decode.
     other: Other,
 

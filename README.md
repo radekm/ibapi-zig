@@ -6,7 +6,8 @@ A Zig library for Interactive Brokers: it talks to Trader Workstation (TWS)
 or IB Gateway using the **protobuf** variant of the TWS API.
 
 > **Status:** early development. The first goal is read-only access:
-> contract lookup, prices of stocks and options, and the list of open orders.
+> contract lookup, prices of stocks and options, historical bars and the list
+> of open orders.
 > Placing, modifying and cancelling orders will come later.
 > See [PLAN.md](PLAN.md).
 
@@ -96,8 +97,8 @@ All methods of the client and the messages they exchange with TWS are listed
 in [Client methods and their messages](docs/en/api.md).
 
 Every operation has a timeout: `connect_timeout`, `request_timeout`,
-`snapshot_timeout` and `write_timeout` in `ibapi.Client.Options`
-(defaults 10 s, 10 s, 15 s and 5 s),
+`snapshot_timeout`, `historical_timeout` and `write_timeout` in
+`ibapi.Client.Options` (defaults 10 s, 10 s, 15 s, 60 s and 5 s),
 and `nextNotice` takes one explicitly. Timeouts are reported as `error.Timeout`.
 At most `max_messages_per_second` (50) messages are sent per second.
 
@@ -114,6 +115,7 @@ Messages that belong to no request (informational errors etc.) are read with
 - [Client methods and their messages](docs/en/api.md)
 - [Looking up contracts and option chains](docs/en/contracts.md)
 - [Prices of stocks and options](docs/en/prices.md)
+- [Historical bars](docs/en/history.md)
 - [Orders (read-only)](docs/en/orders.md)
 - [Wire protocol](docs/en/protocol.md)
 
@@ -129,6 +131,8 @@ cp examples/Config.example.zon Config.zon   # then edit host, port, client_id
 ./zig-out/bin/contracts details AAPL
 ./zig-out/bin/option_chain AAPL 45
 ./zig-out/bin/quote AAPL 20261218 190 C
+./zig-out/bin/bars AAPL minutes 2
+./zig-out/bin/bars AAPL days 30
 ./zig-out/bin/orders
 ```
 
