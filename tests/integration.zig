@@ -212,6 +212,9 @@ fn printOrder(o: ibapi.orders.Order) void {
         ord.lmtPrice,   ord.auxPrice, ord.trailStopPrice, ord.percentOffset, ord.minQty,    ord.tif,
         o.state.status,
     });
+    std.debug.print("    order.filledQuantity \"{?s}\"; library: total {?d} filled {?d} remaining {?d} limit {?d}\n", .{
+        ord.filledQuantity, o.totalQuantity(), o.filledQuantity(), o.remainingQuantity(), o.limitPrice(),
+    });
     if (o.status) |st| {
         std.debug.print("    status {?s} filled \"{?s}\" remaining \"{?s}\" avg fill {?d} last fill {?d} mkt cap {?d} why held \"{?s}\"\n", .{
             st.status, st.filled, st.remaining, st.avgFillPrice, st.lastFillPrice, st.mktCapPrice, st.whyHeld,
