@@ -189,6 +189,7 @@ fn openOrders(r: *Runner) void {
     var without_status: usize = 0;
     for (list.items) |o| {
         if (o.status == null) without_status += 1;
+        printOrder(o);
     }
     r.report("openOrders", .ok, "{d} orders, {d} without a status update", .{ list.items.len, without_status });
 }
@@ -196,7 +197,26 @@ fn openOrders(r: *Runner) void {
 fn completedOrders(r: *Runner) void {
     var list = r.client.completedOrders(r.gpa, .{}) catch |err| return r.report("completedOrders", .failed, "{t}", .{err});
     defer list.deinit();
+    for (list.items) |o| printOrder(o);
     r.report("completedOrders", .ok, "{d} orders", .{list.items.len});
+}
+
+/// Prints the main fields of an order (no account). Decimal quantities are
+/// printed as the raw text TWS sent, and prices that do not apply to the
+/// order type are printed too, so that the encoding of unset values can be
+/// checked (open question in PLAN.md).
+fn printOrder(o: ibapi.orders.Order) void {
+    const ord = o.order;
+    std.debug.print("  order {d} perm {?d}: {?s} {?s} {?s} qty \"{?s}\" lmt {?d} aux {?d} trail {?d} pct {?d} min qty {?d} tif {?s} state {?s}\n", .{
+        o.order_id,     ord.permId,   ord.action,         o.contract.symbol, ord.orderType, ord.totalQuantity,
+        ord.lmtPrice,   ord.auxPrice, ord.trailStopPrice, ord.percentOffset, ord.minQty,    ord.tif,
+        o.state.status,
+    });
+    if (o.status) |st| {
+        std.debug.print("    status {?s} filled \"{?s}\" remaining \"{?s}\" avg fill {?d} last fill {?d} mkt cap {?d} why held \"{?s}\"\n", .{
+            st.status, st.filled, st.remaining, st.avgFillPrice, st.lastFillPrice, st.mktCapPrice, st.whyHeld,
+        });
+    }
 }
 
 fn printBarTime(label: []const u8, t: std.Io.Timestamp) void {

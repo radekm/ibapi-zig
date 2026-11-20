@@ -233,11 +233,14 @@ few months). Typical requests are small, so there is no pause between chunks.
   Replace with `ConnectOptions.timeout` once Zig implements it.
 - Does TWS send open orders (and `OpenOrderEnd`?) on its own right after a
   client connects? An unsolicited `OpenOrderEnd` arriving while `openOrders`
-  waits would end it early with a partial list. First paper run (server 226,
-  no open orders): only 2104/2106/2158 farm notices arrived; recheck with
-  open orders.
-- TWS 10.52 servers (226) send `CompletedOrder` fields 31, 36 and 37 that
-  the 10.52.01 `.proto` files do not define; zig-protobuf skips them (debug
+  waits would end it early with a partial list. Paper runs (server 226):
+  with no open orders and with one order entered in TWS (NVDA), only
+  2104/2106/2158 farm notices arrived after connecting, and no order
+  updates arrived during the test; `openOrders` returned the TWS order with
+  its status. Not yet checked with client id 0 (which binds TWS orders).
+- TWS 10.52 servers (226) send fields 31, 36 and 37 in `CompletedOrder`
+  (36 and 37 also in `OpenOrder`) that the 10.52.01 `.proto` files do not
+  define; zig-protobuf skips them (debug
   log). Regenerate from newer `.proto` files when IB publishes them.
 - A snapshot without a market data subscription or permissions got no
   answer and ended with `error.Timeout` instead of a rejection: EUR.USD (no
@@ -261,6 +264,8 @@ few months). Typical requests are small, so there is no pause between chunks.
   issue while the library places no orders; revisit before the order phase.
 - How does TWS encode unset decimal quantities (`Order.totalQuantity`,
   `OrderStatus.filled`, tick sizes) in protobuf: empty/absent, or a huge
-  sentinel number? `parseDecimal` treats only empty/absent as unset.
+  sentinel number? `parseDecimal` treats only empty/absent as unset. The
+  integration test prints the raw quantities and the prices that do not
+  apply to the order type, so the next paper run with an order shows it.
 - Warning codes: only 2100–2199 are treated as non-terminal for requests so far;
   extend in M4 (e.g. 10167 delayed market data) when market data needs it.
