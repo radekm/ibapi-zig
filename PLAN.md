@@ -165,8 +165,12 @@ application closes the client and connects again (documented).
       owner's paper TWS (server version 226) sent `NextValidId` first, the
       accounts went to the notices and the integration test failed with
       `NoManagedAccounts`
-- [ ] Run the integration test against a real paper TWS / IB Gateway (owner) and
-      resolve the open questions below
+- [x] Run the integration test against a real paper TWS (owner, 2026-11-20,
+      server version 226, no paid market data): passes (0 failed; AAPL
+      snapshot and EUR.USD bars skipped as rejected, no stray notices)
+- [ ] Resolve the open questions below that need a real TWS (open orders
+      sent unasked, `endDateTime` boundary bars, unset decimals, the
+      snapshot that once timed out without any message)
 
 ### M7 — Historical bars (OHLC)
 Owner's decisions: only **1 min** and **1 day** bars (the application
