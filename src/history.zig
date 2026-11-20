@@ -80,6 +80,7 @@ pub const MinuteBarsParams = struct {
     /// Bars starting before this instant are returned; null means now, in
     /// which case the current, still unfinished bar may be included.
     end: ?Io.Timestamp = null,
+    /// What the bars are built from.
     what_to_show: WhatToShow = .trades,
     /// Only regular trading hours.
     use_rth: bool = true,
@@ -92,6 +93,7 @@ pub const DailyBarsParams = struct {
     /// Last trading day returned (inclusive); null means today, in which case
     /// today's unfinished bar may be included.
     last: ?Day = null,
+    /// What the bars are built from.
     what_to_show: WhatToShow = .trades,
     /// Only regular trading hours.
     use_rth: bool = true,
@@ -105,9 +107,13 @@ pub const DailyBarsParams = struct {
 pub const MinuteBar = struct {
     /// Start of the bar (UTC instant, whole seconds).
     time: Io.Timestamp,
+    /// First price of the bar (see `WhatToShow`).
     open: ?f64,
+    /// Highest price of the bar.
     high: ?f64,
+    /// Lowest price of the bar.
     low: ?f64,
+    /// Last price of the bar.
     close: ?f64,
     /// Traded volume; only for `WhatToShow.trades`.
     volume: ?f64,
@@ -145,9 +151,13 @@ pub const MinuteBar = struct {
 pub const DailyBar = struct {
     /// Trading day of the bar, as dated by the exchange (no time zone).
     day: Day,
+    /// First price of the bar (see `WhatToShow`).
     open: ?f64,
+    /// Highest price of the bar.
     high: ?f64,
+    /// Lowest price of the bar.
     low: ?f64,
+    /// Last price of the bar.
     close: ?f64,
     /// Traded volume; only for `WhatToShow.trades`.
     volume: ?f64,
@@ -204,13 +214,14 @@ pub const max_minute_chunk_seconds: i64 = 86400;
 /// Smallest duration sent with 1-minute bars.
 pub const min_minute_chunk_seconds: i64 = 60;
 
-/// Bar size strings sent to TWS.
+/// Bar size string of 1-minute bars sent to TWS.
 pub const bar_size_minute = "1 min";
+/// Bar size string of 1-day bars sent to TWS.
 pub const bar_size_day = "1 day";
 
-/// `formatDate` values: 1 = text (day bars are always `yyyyMMdd`),
-/// 2 = epoch seconds.
+/// `formatDate` for dates as text (day bars are always `yyyyMMdd`).
 pub const format_date_text: i32 = 1;
+/// `formatDate` for times as Unix seconds.
 pub const format_date_epoch: i32 = 2;
 
 /// Whether TWS error 162 ("Historical Market Data Service error") says that
