@@ -32,7 +32,7 @@ send it):
 | `open`, `high`, `low` | today |
 | `close` | close of the previous trading day |
 | `volume` | today's volume |
-| `data_type` | `.live` or `.frozen` as reported by TWS; other values (delayed) have no tag, print them with `name()` |
+| `data_type` | `.live` or `.frozen` as reported by TWS (delayed data end the snapshot with `error.RequestRejected`) |
 | `bid_computation`, `ask_computation`, `last_computation`, `model_computation` | option values, see below |
 
 `quote.mid()` returns the midpoint of bid and ask.
@@ -65,8 +65,12 @@ describe these markers; the library follows IB's reference C++ client here.
 
 Both need a market data subscription for the instrument (for US options
 OPRA). Without it the snapshot fails with `error.RequestRejected` and TWS
-error 354 in the diagnostics. Errors 10090 (part of the data not subscribed)
-and 10167 are treated as warnings and do not end the snapshot.
+error 354 in the diagnostics. TWS may instead switch to delayed data
+(warning 2186 or 10167, or a delayed data type; seen on a paper account
+during US trading hours). The library never accepts delayed data, so this
+also ends with `error.RequestRejected`: with code 2186 / 10167 and its text,
+or with code 0 and a message naming the data type. Error 10090 (part of the
+data not subscribed) is only a warning and does not end the snapshot.
 
 ## Time limits
 

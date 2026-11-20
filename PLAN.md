@@ -120,7 +120,7 @@ Owner's decisions: only snapshots, **never streaming subscriptions**; only
       `TickSnapshotEnd`: bid/ask/last + sizes, last time, open/high/low/close, volume,
       option model computations (bid/ask/last/model: IV, greeks, PV dividend, underlying price)
 - [x] TWS "not computed" sentinels (-1/-2) mapped to null (follows IB's reference client, not documented)
-- [x] Errors: 354 → `error.RequestRejected`; 10090/10167 are warnings; cancel on timeout;
+- [x] Errors: 354 → `error.RequestRejected`; 10090 is a warning; cancel on timeout;
       `Options.snapshot_timeout` (15 s, TWS needs up to ~11 s)
 - [x] Example `examples/quote.zig`, guide `docs/{en,cs}/prices.md`
 
@@ -242,6 +242,12 @@ few months). Typical requests are small, so there is no pause between chunks.
   snapshot now logs (debug) which message kinds it received, and the
   integration test lists the notices that arrived during the run. Find out
   what TWS sends (if anything) and handle it.
+- Second paper run during US trading hours: the AAPL snapshot got warning
+  2186 ("You elected to receive delayed market data instead") and market
+  data type 3 (delayed) although the client asks for frozen. Owner's
+  decision: delayed data end a snapshot with `error.RequestRejected`
+  (2186 and 10167 are no longer warnings; a delayed data type is rejected
+  with code 0).
 - Order updates that arrive while `openOrders` waits are consumed by it (and
   lost if it times out) instead of going to the notices.
 - `ErrorMessage.id` is an order id for order-related errors; such an error

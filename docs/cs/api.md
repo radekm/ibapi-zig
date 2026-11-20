@@ -58,7 +58,8 @@ který pro client id 0 přiváže ruční příkazy z TWS.
 - Chyba, jejíž `id` je id čekajícího požadavku, ukončí tento požadavek
   s `error.RequestRejected`; kód a text jsou v `RequestOptions.diagnostics`.
 - Varování požadavek neukončí a jen se zalogují: kódy 2100–2199 (stav
-  spojení), 10090 a 10167 (tržní data).
+  spojení) kromě 2186 a 10090 (tržní data). 2186 a 10167 (TWS místo toho
+  posílá zpožděná data) jsou chyby: zpožděná data se nikdy nepřijímají.
 - Chyby s `id = -1` nebo s id, na které nečeká žádný požadavek, jdou do notices.
 
 ## Notices

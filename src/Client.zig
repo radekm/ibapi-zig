@@ -456,6 +456,13 @@ pub const Diagnostics = struct {
         return d.message_buf[0..d.message_len];
     }
 
+    /// A rejection decided by the library rather than by a TWS error.
+    fn setText(d: *Diagnostics, code: i32, comptime fmt: []const u8, args: anytype) void {
+        d.code = code;
+        const text = std.fmt.bufPrint(&d.message_buf, fmt, args) catch d.message_buf[0..];
+        d.message_len = text.len;
+    }
+
     fn set(d: *Diagnostics, e: proto.ErrorMessage) void {
         const text = e.errorMsg orelse "";
         d.code = e.errorCode orelse 0;
@@ -482,11 +489,19 @@ pub const RequestError = Error || error{
 
 /// Whether a TWS error code is only a warning that does not end a request:
 /// 2100–2199 (connection status, e.g. 2104 "market data farm connection is
-/// OK"), 10090 (part of the requested market data is not subscribed) and
-/// 10167 (displaying delayed market data).
+/// OK") and 10090 (part of the requested market data is not subscribed).
+/// The codes saying that TWS sends delayed market data instead, 2186 and
+/// 10167, are errors: the library never accepts delayed data.
 pub fn isWarningCode(code: i32) bool {
-    return (code >= 2100 and code < 2200) or code == 10090 or code == 10167;
+    if (code == delayed_data_code or code == delayed_data_displayed_code) return false;
+    return (code >= 2100 and code < 2200) or code == 10090;
 }
+
+/// "Requested real-time market data requires additional subscription …
+/// You elected to receive delayed market data instead."
+const delayed_data_code = 2186;
+/// "Requested market data is not subscribed. Displaying delayed market data."
+const delayed_data_displayed_code = 10167;
 
 /// A list of protobuf messages returned by a request, allocated with `gpa`.
 pub fn List(comptime T: type) type {
@@ -598,7 +613,9 @@ pub fn searchSymbols(c: *Client, gpa: Allocator, pattern: []const u8, opts: Requ
 ///
 /// The kind of data follows `Options.market_data_type`. Without a market
 /// data subscription for the contract TWS rejects the request (error 354)
-/// with `error.RequestRejected`. The default limit is
+/// with `error.RequestRejected`. TWS may instead switch to delayed data
+/// (warning 2186 or 10167, or a delayed market data type); the library never
+/// accepts delayed data, so that also ends with `error.RequestRejected`. The default limit is
 /// `Options.snapshot_timeout`; on timeout the request is cancelled.
 /// Several snapshots may run concurrently (`io.async`), within the TWS
 /// limit of simultaneous market data lines (usually 100).
@@ -899,7 +916,15 @@ fn collectQuote(c: *Client, r: *Responses, diagnostics: ?*Diagnostics, seen: *Se
             .tick_size => |t| market_data.applySize(&q, t),
             .tick_string => |t| market_data.applyString(&q, t),
             .tick_option_computation => |t| market_data.applyOptionComputation(&q, t),
-            .market_data_type => |t| q.data_type = if (t.marketDataType) |v| @fromBackingInt(@intCast(v)) else null,
+            .market_data_type => |t| {
+                const v = t.marketDataType orelse continue;
+                const data_type: market_data.MarketDataType = @fromBackingInt(@intCast(v));
+                if (data_type != .live and data_type != .frozen) {
+                    if (diagnostics) |d| d.setText(0, "TWS sent market data of type {d} ({s}); only live and frozen data are accepted", .{ v, data_type.name() });
+                    return error.RequestRejected;
+                }
+                q.data_type = data_type;
+            },
             .tick_generic, .tick_req_params, .tick_snapshot_end => {},
             else => return error.UnexpectedResponse,
         }
@@ -1743,7 +1768,29 @@ fn serveSnapshots(server: *FakeServer) !void {
         defer q.deinit(gpa);
         try conn.send(.error_message, proto.ErrorMessage{ .id = q.reqId, .errorCode = 354, .errorMsg = "Requested market data is not subscribed." });
     }
-    // 4. No answer: the client times out and cancels.
+    // 4. TWS switches to delayed data: a warning first ...
+    {
+        const req = try conn.readRequest();
+        var q = try req.decode(proto.MarketDataRequest, gpa);
+        defer q.deinit(gpa);
+        try conn.send(.error_message, proto.ErrorMessage{
+            .id = q.reqId,
+            .errorCode = 2186,
+            .errorMsg = "Warning: Requested real-time market data requires additional subscription for API. You elected to receive delayed market data instead.",
+        });
+        try conn.send(.market_data_type, proto.MarketDataType{ .reqId = q.reqId, .marketDataType = 3 });
+        try conn.send(.tick_snapshot_end, proto.TickSnapshotEnd{ .reqId = q.reqId });
+    }
+    // 5. ... or only the market data type.
+    {
+        const req = try conn.readRequest();
+        var q = try req.decode(proto.MarketDataRequest, gpa);
+        defer q.deinit(gpa);
+        try conn.send(.market_data_type, proto.MarketDataType{ .reqId = q.reqId, .marketDataType = 4 });
+        try conn.send(.tick_price, proto.TickPrice{ .reqId = q.reqId, .tickType = 75, .price = 189.5 });
+        try conn.send(.tick_snapshot_end, proto.TickSnapshotEnd{ .reqId = q.reqId });
+    }
+    // 6. No answer: the client times out and cancels.
     {
         const req = try conn.readRequest();
         var q = try req.decode(proto.MarketDataRequest, gpa);
@@ -1790,6 +1837,12 @@ test "snapshots of stocks and options, rejections and timeouts" {
         var diag: Diagnostics = .{};
         try testing.expectError(error.RequestRejected, c.snapshot(contract.Query.byConId(1, "SMART"), .{ .diagnostics = &diag }));
         try testing.expectEqual(@as(i32, 354), diag.code);
+
+        try testing.expectError(error.RequestRejected, c.snapshot(contract.Query.byConId(3, "SMART"), .{ .diagnostics = &diag }));
+        try testing.expectEqual(@as(i32, 2186), diag.code);
+        try testing.expectError(error.RequestRejected, c.snapshot(contract.Query.byConId(4, "SMART"), .{ .diagnostics = &diag }));
+        try testing.expectEqual(@as(i32, 0), diag.code);
+        try testing.expectEqualStrings("TWS sent market data of type 4 (delayed_frozen); only live and frozen data are accepted", diag.message());
 
         try testing.expectError(error.Timeout, c.snapshot(contract.Query.byConId(2, "SMART"), .{ .timeout = millis(100) }));
     }

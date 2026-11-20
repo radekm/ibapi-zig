@@ -32,7 +32,7 @@ neposlalo):
 | `open`, `high`, `low` | dnešní |
 | `close` | závěr předchozího obchodního dne |
 | `volume` | dnešní objem |
-| `data_type` | `.live` nebo `.frozen`, jak ho nahlásilo TWS; jiné hodnoty (zpožděná data) nemají tag, vypisujte je přes `name()` |
+| `data_type` | `.live` nebo `.frozen`, jak ho nahlásilo TWS (zpožděná data ukončí snapshot s `error.RequestRejected`) |
 | `bid_computation`, `ask_computation`, `last_computation`, `model_computation` | hodnoty pro opce, viz níže |
 
 `quote.mid()` vrací střed mezi bid a ask.
@@ -65,8 +65,12 @@ značky nepopisuje; knihovna se tu řídí referenčním C++ klientem od IB.
 
 Obojí vyžaduje předplatné tržních dat pro daný instrument (pro americké opce
 OPRA). Bez něj snapshot skončí s `error.RequestRejected` a v diagnostice je
-chyba TWS 354. Chyby 10090 (část dat není předplacená) a 10167 se berou
-jako varování a snapshot neukončí.
+chyba TWS 354. TWS může místo toho přejít na zpožděná data (varování 2186
+nebo 10167, případně zpožděný typ dat; pozorováno na paper účtu během
+amerických obchodních hodin). Knihovna zpožděná data nikdy nepřijímá, takže
+i to skončí s `error.RequestRejected`: s kódem 2186 / 10167 a jeho textem,
+nebo s kódem 0 a zprávou, která typ dat pojmenuje. Chyba 10090 (část dat
+není předplacená) je jen varování a snapshot neukončí.
 
 ## Časové limity
 

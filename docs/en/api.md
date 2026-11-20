@@ -59,7 +59,9 @@ manual TWS orders to client id 0.
 - An error whose `id` is the id of a pending request ends that request with
   `error.RequestRejected`; the code and text are in `RequestOptions.diagnostics`.
 - Warnings do not end a request and are only logged: codes 2100–2199
-  (connection status), 10090 and 10167 (market data).
+  (connection status) except 2186, and 10090 (market data). 2186 and 10167
+  (TWS sends delayed market data instead) are errors: delayed data are never
+  accepted.
 - Errors with `id = -1` or an id no request waits for go to the notices.
 
 ## Notices
